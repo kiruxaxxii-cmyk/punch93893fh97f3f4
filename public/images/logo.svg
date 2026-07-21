@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="pGrad" x1="24" y1="8" x2="96" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f0a0ff"/>
+      <stop offset="40%" stop-color="#d040ff"/>
+      <stop offset="100%" stop-color="#9000e0"/>
+    </linearGradient>
+    <filter id="pGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feColorMatrix in="b" type="matrix" values="1 0 0 0 0  0 0.2 1 0 0  0 0 1 0 0  0 0 0 0.9 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path filter="url(#pGlow)" fill="url(#pGrad)" d="M24 14h42c24.5 0 40 15.5 40 38.5S90.5 91 66 91H48v15H24V14zm22 58h18c14.5 0 23.5-9 23.5-24.5S78.5 23 66 23H46v49z"/>
+</svg>

@@ -1,0 +1,16 @@
+node_modules/
+data/*
+!data/README.md
+!data/punch-ebd.db
+.admin-credentials.local
+.env
+.next/
+loader/build/
+loader/deps/
+tmp-expensive.html
+tmp-*.js
+tmp-*.html
+public/downloads/imgui.ini
+public/downloads/*.dll
+UIEngine/
+public/downloads/punch-1.2*.jar

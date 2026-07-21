@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Punch — Minecraft Client</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.css" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/landing.css?v=19" />
+</head>
+<body class="page-landing">
+  <div class="landing-hero-bg" aria-hidden="true"></div>
+  <canvas id="purpleRays" class="purple-rays-canvas" aria-hidden="true"></canvas>
+  <div class="landing-noise" aria-hidden="true"></div>
+
+  <header class="site-header landing-header" id="siteHeader">
+    <nav class="header-nav">
+      <a href="#hero" class="active">Главная</a>
+      <a href="#gallery">Галерея</a>
+      <a href="#advantages">Преимущества</a>
+      <a href="#pricing">Цены</a>
+      <a href="#download">Скачать</a>
+    </nav>
+    <a href="#hero" class="header-brand visible">
+      <span class="brand-p">P</span><span class="brand-text">unch</span>
+    </a>
+    <div class="header-actions" id="headerActions">
+      <a href="/login.html" class="btn-blur btn-accent" data-auth-guest>Вход</a>
+      <a href="/cabinet.html" class="btn-blur btn-accent" data-auth-user hidden>Кабинет</a>
+    </div>
+  </header>
+
+  <main>
+    <section id="hero" class="landing-hero">
+      <div class="landing-badge" data-fall-badge>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/></svg>
+        PUNCH // клиент нового поколения
+      </div>
+      <h1 class="landing-title fall-text" id="landingTitle" data-text="Добро пожаловать в Punch"></h1>
+      <p class="landing-sub fall-text" id="landingSub" data-text="Хватит оглядываться на правила — используй игру по максимуму!"></p>
+      <div class="landing-cta">
+        <a href="#pricing" class="btn-landing btn-landing-accent">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>
+          Тарифы
+        </a>
+        <a href="#advantages" class="btn-landing btn-landing-ghost">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+          Преимущества
+        </a>
+      </div>
+    </section>
+
+    <section id="gallery" class="landing-section">
+      <div class="landing-section-head landing-reveal">
+        <div class="landing-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          Галерея
+        </div>
+        <h2 class="fall-text" data-text="Посмотри Punch в деле"></h2>
+        <p class="landing-section-desc">Скриншоты из игры — меню, HUD и атмосфера клиента</p>
+      </div>
+      <div class="carousel landing-reveal" id="carousel">
+        <div class="carousel-stage">
+          <button type="button" class="carousel-arrow carousel-prev" aria-label="Назад"><svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M14 6l-6 6 6 6"/></svg></button>
+          <div class="carousel-viewport">
+            <figure class="carousel-slide active" data-index="0"><img src="/images/hero-bg.png" alt="Атмосфера Punch" draggable="false" /><figcaption>Атмосфера</figcaption></figure>
+            <figure class="carousel-slide" data-index="1"><img src="/images/gui-menu.png" alt="Меню Punch" draggable="false" /><figcaption>Меню модулей</figcaption></figure>
+            <figure class="carousel-slide" data-index="2"><img src="/images/hud-overlay.png" alt="HUD Punch" draggable="false" /><figcaption>HUD в игре</figcaption></figure>
+          </div>
+          <button type="button" class="carousel-arrow carousel-next" aria-label="Вперёд"><svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 6l6 6-6 6"/></svg></button>
+        </div>
+        <div class="carousel-dots">
+          <button class="carousel-dot active" data-index="0" aria-label="Слайд 1"></button>
+          <button class="carousel-dot" data-index="1" aria-label="Слайд 2"></button>
+          <button class="carousel-dot" data-index="2" aria-label="Слайд 3"></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="advantages" class="landing-section">
+      <div class="landing-section-head landing-reveal">
+        <div class="landing-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+          Преимущества
+        </div>
+        <h2 class="fall-text" data-text="Почему Punch?"></h2>
+        <p class="landing-section-desc">Всё, что отличает наш клиент от остальных</p>
+      </div>
+      <div class="adv-grid landing-reveal">
+        <div class="adv-col">
+          <article class="adv-card tall">
+            <h3>Пиковая производительность</h3>
+            <p>Оптимизированное ядро — нулевая задержка и стабильный FPS даже на слабых ПК.</p>
+          </article>
+          <article class="adv-card">
+            <h3>Интуитивный интерфейс</h3>
+            <p>Минималистичное меню для быстрого доступа ко всем 50+ модулям.</p>
+          </article>
+          <article class="adv-card">
+            <h3>Приоритетная поддержка</h3>
+            <p>Прямой доступ к команде с быстрым ответом в Discord.</p>
+          </article>
+        </div>
+        <div class="adv-col">
+          <article class="adv-card xtall">
+            <h3>Продвинутая защита</h3>
+            <p>Многоуровневое шифрование и HWID-привязка для защиты аккаунта и данных.</p>
+          </article>
+          <article class="adv-card">
+            <h3>Элитные возможности</h3>
+            <p>Набор инструментов для максимального преимущества в PvP и выживании.</p>
+          </article>
+        </div>
+        <div class="adv-col">
+          <article class="adv-card">
+            <h3>Постоянные обновления</h3>
+            <p>Фоновая доставка новых модулей и патчей стабильности под новые версии MC.</p>
+          </article>
+          <article class="adv-card tall">
+            <h3>Fabric 1.20 — 1.21</h3>
+            <p>Полная совместимость с актуальными версиями Minecraft и быстрый запуск через лаунчер.</p>
+          </article>
+          <article class="adv-card">
+            <h3>50+ модулей</h3>
+            <p>Combat, Movement, Render, Utility — всё настраивается под твой стиль игры.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="pricing" class="landing-section">
+      <div class="landing-section-head landing-reveal">
+        <div class="landing-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          Тарифы
+        </div>
+        <h2 class="fall-text" data-text="Выбери свой план"></h2>
+        <p class="landing-section-desc">Ключ приходит на email · активация в кабинете · промокоды в окне оплаты</p>
+      </div>
+      <div class="pricing-grid landing-reveal">
+        <article class="price-card glass-block" data-plan="7 дней" data-price="49">
+          <h3>7 дней</h3>
+          <p class="price">49 ₽</p>
+          <button type="button" class="btn-blur btn-block btn-buy" data-plan="7 дней" data-price="49">Купить</button>
+        </article>
+        <article class="price-card glass-block featured" data-plan="1 месяц" data-price="99">
+          <h3>1 месяц</h3>
+          <p class="price">99 ₽</p>
+          <button type="button" class="btn-blur btn-accent btn-block btn-buy" data-plan="1 месяц" data-price="99">Купить</button>
+        </article>
+        <article class="price-card glass-block" data-plan="3 месяца" data-price="149">
+          <h3>3 месяца</h3>
+          <p class="price">149 ₽</p>
+          <button type="button" class="btn-blur btn-block btn-buy" data-plan="3 месяца" data-price="149">Купить</button>
+        </article>
+        <article class="price-card glass-block" data-plan="Навсегда" data-price="219">
+          <h3>Навсегда</h3>
+          <p class="price">219 ₽</p>
+          <button type="button" class="btn-blur btn-block btn-buy" data-plan="Навсегда" data-price="219">Купить</button>
+        </article>
+        <article class="price-card glass-block" data-plan="Сброс HWID" data-price="100">
+          <h3>Сброс HWID</h3>
+          <p class="price">100 ₽</p>
+          <button type="button" class="btn-blur btn-block btn-buy" data-plan="Сброс HWID" data-price="100">Купить</button>
+        </article>
+      </div>
+    </section>
+
+    <section id="download" class="landing-section">
+      <div class="landing-section-head landing-reveal">
+        <div class="landing-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Скачать
+        </div>
+        <h2 class="fall-text" data-text="Запусти Punch"></h2>
+        <p class="landing-section-desc">Скачивание доступно с активной подпиской</p>
+      </div>
+      <div class="landing-download landing-reveal">
+        <h2 class="fall-text" data-text="Punch Launcher"></h2>
+        <p>v2.4.1 · Fabric 1.20.4 — 1.21.1</p>
+        <button class="btn-blur btn-accent btn-lg" id="btnDownload">Скачать лаунчер</button>
+        <p class="page-note">Нужна активная подписка · <a href="/login.html">Войти</a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><span>© 2026 Punch</span></footer>
+
+  <div class="buy-modal fall-text-skip" id="buyModal" hidden>
+    <div class="buy-modal-backdrop" data-close-modal></div>
+    <div class="checkout-card" role="dialog" aria-modal="true" aria-labelledby="buyModalTitle">
+      <button type="button" class="buy-modal-close" data-close-modal aria-label="Закрыть">×</button>
+      <p class="checkout-product" id="buyModalTitle">Product: <span id="buyModalPlan"></span></p>
+      <select id="buyPayMethod" class="checkout-select">
+        <option value="sbp">Система Быстрых Платежей</option>
+        <option value="cards">Карты</option>
+        <option value="usdt">Криптовалюта (USDT/TRC20)</option>
+        <option value="ton">Криптовалюта (TON)</option>
+        <option value="ltc">Криптовалюта (LTC)</option>
+        <option value="eth">Криптовалюта (ETH)</option>
+      </select>
+      <div class="checkout-promo-row">
+        <input type="text" id="buyPromoInput" placeholder="Промокод" autocomplete="off" />
+        <button type="button" class="checkout-apply-btn" id="buyApplyPromo">Применить</button>
+      </div>
+      <p class="buy-promo-msg" id="buyPromoMsg"></p>
+      <div class="checkout-price-hint" id="buyPriceHint" hidden>
+        <span class="buy-price-old" id="buyPriceOld"></span>
+        <span class="buy-price-current" id="buyPriceCurrent"></span>
+      </div>
+      <button type="button" class="checkout-pay-btn" id="buyConfirmBtn">Оплатить</button>
+      <div class="checkout-or">OR</div>
+      <button type="button" class="checkout-pay-btn checkout-funpay-btn" id="buyFunpayBtn">Pay with Funpay</button>
+    </div>
+  </div>
+
+  <script src="/js/purple-rays.js"></script>
+  <script src="/js/falling-letters.js?v=19"></script>
+  <script src="/js/tilt-light.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/carousel.js"></script>
+  <script src="/js/purchase.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

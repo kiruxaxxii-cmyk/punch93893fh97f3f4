@@ -1,0 +1,99 @@
+@import 'lenis/dist/lenis.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 80px; /* Offset for fixed header */
+  }
+
+  html.lenis, html.lenis body {
+    height: auto;
+  }
+
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  .lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+  }
+
+  .lenis.lenis-stopped {
+    overflow: hidden;
+  }
+
+  .lenis.lenis-scrolling iframe {
+    pointer-events: none;
+  }
+
+  * {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-black text-punch-muted font-sans antialiased;
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: rgba(168, 85, 247, 0.35);
+    color: #fff;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/[0.03] border border-white/[0.07] backdrop-blur-2xl rounded-2xl;
+  }
+
+  .btn-purple {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 font-medium
+           bg-punch-accent text-white transition-all duration-300
+           hover:bg-punch-accentSoft hover:shadow-glow hover:-translate-y-0.5 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 font-medium
+           bg-white/[0.03] border border-white/[0.08] text-punch-title
+           backdrop-blur-xl transition-all duration-300
+           hover:bg-white/[0.07] hover:-translate-y-0.5 active:scale-[0.98];
+  }
+
+  .btn-blur {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
+           bg-white/[0.03] border border-white/[0.08] text-punch-title backdrop-blur-xl
+           transition-all duration-300 hover:bg-white/[0.07];
+  }
+
+  .field {
+    @apply w-full rounded-xl bg-white/[0.03] border border-white/[0.08] px-4 py-3 text-punch-title
+            placeholder:text-punch-dim/50 outline-none transition-colors duration-300
+            focus:border-punch-accent/50 focus:bg-white/[0.05];
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03]
+            px-4 py-1.5 text-xs font-medium uppercase tracking-wider text-punch-dim backdrop-blur-xl;
+  }
+
+  .card {
+    @apply glass p-6 transition-all duration-300;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+.geometric-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}

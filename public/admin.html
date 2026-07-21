@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Panel — Punch</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css?v=19" />
+</head>
+<body class="page-admin">
+  <div class="page-bg cabinet-bg"></div>
+
+  <header class="site-header scrolled">
+    <nav class="header-nav">
+      <a href="/cabinet.html">Кабинет</a>
+      <a href="/admin.html" class="active">Админ</a>
+    </nav>
+    <a href="/" class="header-brand visible"><span class="brand-p">P</span><span class="brand-text">unch</span></a>
+    <div class="header-actions">
+      <button class="btn-blur" id="btnLogout">Выйти</button>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <div class="admin-head panel-reveal">
+      <h1 class="fall-text" data-text="Admin Panel">Admin Panel</h1>
+      <p class="fall-text" data-text="Управление пользователями, ключами и промокодами"></p>
+      <div class="admin-toast" id="adminToast" hidden></div>
+    </div>
+
+    <div class="admin-stats panel-reveal" id="adminStats">
+      <div class="stat-card"><span>Users</span><strong id="statUsers">—</strong></div>
+      <div class="stat-card"><span>Active subs</span><strong id="statActive">—</strong></div>
+      <div class="stat-card"><span>Unused keys</span><strong id="statKeys">—</strong></div>
+      <div class="stat-card"><span>Promos</span><strong id="statPromos">—</strong></div>
+    </div>
+
+    <div class="admin-tabs">
+      <button class="admin-tab active" data-tab="users">Пользователи</button>
+      <button class="admin-tab" data-tab="keys">Ключи</button>
+      <button class="admin-tab" data-tab="promos">Промокоды</button>
+      <button class="admin-tab" data-tab="logs">Логи</button>
+      <button class="admin-tab" data-tab="ebd">EBD</button>
+    </div>
+
+    <section class="admin-panel active" id="tab-users">
+      <div class="admin-toolbar">
+        <input type="search" id="userSearch" placeholder="Поиск по нику, email, UID..." />
+        <button class="cabinet-btn" id="btnSearchUsers">Найти</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr><th>UID</th><th>User</th><th>Email</th><th>Role</th><th>Plan</th><th>Sub</th><th></th></tr>
+          </thead>
+          <tbody id="usersTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-panel" id="tab-keys">
+      <form class="admin-form" id="genKeyForm">
+        <select name="plan">
+          <option value="trial">Trial (7d)</option>
+          <option value="month">Month</option>
+          <option value="quarter">Quarter</option>
+          <option value="lifetime">Lifetime</option>
+        </select>
+        <input type="number" name="durationDays" placeholder="Days" value="30" min="1" />
+        <input type="number" name="count" placeholder="Count" value="1" min="1" max="50" />
+        <button type="submit" class="cabinet-btn cabinet-btn-accent">Создать ключи</button>
+      </form>
+      <pre class="admin-output" id="keysOutput"></pre>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Key</th><th>Plan</th><th>Days</th><th>Used</th></tr></thead>
+          <tbody id="keysTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-panel" id="tab-promos">
+      <form class="admin-form" id="promoForm">
+        <input type="text" name="code" placeholder="PROMO CODE" required />
+        <input type="number" name="discountPercent" placeholder="Discount %" min="1" max="100" required />
+        <input type="number" name="maxUses" placeholder="Max uses (0=∞)" value="0" min="0" />
+        <button type="submit" class="cabinet-btn cabinet-btn-accent">Создать промокод</button>
+      </form>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Code</th><th>Discount</th><th>Uses</th><th>Active</th><th></th></tr></thead>
+          <tbody id="promosTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-panel" id="tab-logs">
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Time</th><th>User</th><th>Action</th><th>IP</th></tr></thead>
+          <tbody id="logsTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-panel" id="tab-ebd">
+      <div class="admin-form ebd-panel">
+        <p class="ebd-lead">Единая база данных (EBD) — все аккаунты, ключи и чат лаунчера в одном файле на сервере/ПК.</p>
+        <div class="ebd-grid" id="ebdInfo">
+          <div class="stat-card"><span>Файл</span><strong id="ebdPath">—</strong></div>
+          <div class="stat-card"><span>Папка data</span><strong id="ebdDataDir">—</strong></div>
+          <div class="stat-card"><span>Размер</span><strong id="ebdSize">—</strong></div>
+          <div class="stat-card"><span>Статус</span><strong id="ebdHealth">—</strong></div>
+          <div class="stat-card"><span>Пользователи</span><strong id="ebdUsers">—</strong></div>
+        </div>
+        <div class="admin-toolbar">
+          <button class="cabinet-btn" id="btnEbdRefresh">Обновить</button>
+          <button class="cabinet-btn cabinet-btn-accent" id="btnEbdBackup">Скачать backup (.db)</button>
+          <button class="cabinet-btn" id="btnEbdDedupe">Удалить дубликаты</button>
+        </div>
+        <h3>Дубликаты email</h3>
+        <pre class="admin-output" id="ebdDupEmails">Нет</pre>
+        <h3>Дубликаты логинов</h3>
+        <pre class="admin-output" id="ebdDupUsers">Нет</pre>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="admin-dialog" id="editUserDialog">
+    <form method="dialog" id="editUserForm">
+      <h3>Edit user <span id="editUserName"></span></h3>
+      <input type="hidden" name="id" id="editUserId" />
+      <label>Role
+        <select name="role" id="editUserRole">
+          <option value="user">User</option>
+          <option value="media">Media</option>
+          <option value="moderator">Moderator</option>
+          <option value="admin">Admin</option>
+          <option value="owner">Owner</option>
+        </select>
+      </label>
+      <label>Plan
+        <select name="plan" id="editUserPlan">
+          <option value="none">none</option>
+          <option value="trial">trial</option>
+          <option value="month">month</option>
+          <option value="quarter">quarter</option>
+          <option value="lifetime">lifetime</option>
+        </select>
+      </label>
+      <label>Subscription expires<input type="datetime-local" name="subscriptionExpiresAt" id="editUserSub" /></label>
+      <div class="dialog-actions">
+        <button type="button" class="cabinet-btn" id="editUserClearSub">Снять подписку</button>
+        <button type="button" class="cabinet-btn" id="editUserCancel">Cancel</button>
+        <button type="submit" class="cabinet-btn cabinet-btn-accent">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <footer class="site-footer"><span>© 2026 Punch</span></footer>
+  <script src="/js/roles.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/falling-letters.js?v=19"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>
