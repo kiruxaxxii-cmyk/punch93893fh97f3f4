@@ -26,7 +26,18 @@ function Write-Info($m) {
 Remove-Item $logFile -ErrorAction SilentlyContinue
 Write-Info "start $(Get-Date -Format o)"
 
-function Prepare-PunchMods {
+function Download-File([string]$Url, [string]$OutFile) {
+  New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
+  $tmp = $OutFile + ".tmp"
+  Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing -UserAgent "PunchLauncher/2.0"
+  if (-not (Test-Path $tmp) -or ((Get-Item $tmp).Length -lt 64)) {
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    throw "Download failed: $Url"
+  }
+  Move-Item $tmp $OutFile -Force
+}
+
+function Ensure-PunchMods {
   $modsDir = Join-Path $mc "mods"
   $disabledDir = Join-Path $mc "mods-disabled-by-punch"
   New-Item -ItemType Directory -Force -Path $modsDir | Out-Null
@@ -43,40 +54,85 @@ function Prepare-PunchMods {
       Write-Info "Disabling conflicting mod: $($_.Name)"
       $dest = Join-Path $disabledDir $_.Name
       if (Test-Path $dest) { Remove-Item $dest -Force -ErrorAction SilentlyContinue }
-      # May be hidden - force move
       $_.Attributes = [System.IO.FileAttributes]::Archive
       Move-Item $_.FullName $dest -Force
     }
   }
 
   $punch = Join-Path $modsDir "punch-2.0.jar"
+  $apiNamed = Join-Path $modsDir "fabric-api-0.119.4-1.21.4.jar"
+  $apiAlt = Join-Path $modsDir "fabric-api.jar"
+
+  if (-not (Test-Path $punch) -or ((Get-Item $punch -Force).Length -lt 1000000)) {
+    Write-Info "Downloading punch-2.0.jar into mods..."
+    $urls = @(
+      "https://punchdlc.up.railway.app/downloads/punch-client.jar",
+      "https://raw.githubusercontent.com/kiruxaxxii-cmyk/punch93893fh97f3f4/main/public/downloads/punch-client.jar",
+      "https://www.dropbox.com/scl/fi/uei89jmy6lpo37v4k1azl/punch-2.0.jar?rlkey=gq7eozz21ml83pc3kxdn32c90&dl=1"
+    )
+    $ok = $false
+    foreach ($u in $urls) {
+      try { Download-File $u $punch; $ok = $true; break } catch { Write-Info "punch dl fail: $($_.Exception.Message)" }
+    }
+    if (-not $ok) { throw "Cannot download punch-2.0.jar - check internet" }
+    (Get-Item $punch).Attributes = [System.IO.FileAttributes]::Archive
+  }
+
   $api = Get-ChildItem $modsDir -Force -Filter "fabric-api*.jar" -ErrorAction SilentlyContinue |
     Where-Object { $_.Length -gt 100000 } | Select-Object -First 1
-  if (-not (Test-Path $punch) -or ((Get-Item $punch -Force).Length -lt 1000000)) {
-    throw "punch-2.0.jar missing in .minecraft\mods - re-run Punch launcher to download"
-  }
   if (-not $api) {
-    throw "fabric-api missing in .minecraft\mods - re-run Punch launcher to download"
+    Write-Info "Downloading fabric-api into mods..."
+    $urls = @(
+      "https://punchdlc.up.railway.app/downloads/fabric-api-0.119.4-1.21.4.jar",
+      "https://raw.githubusercontent.com/kiruxaxxii-cmyk/punch93893fh97f3f4/main/public/downloads/fabric-api-0.119.4-1.21.4.jar",
+      "https://www.dropbox.com/scl/fi/zg3vdz6ho6vq4joz1eakc/fabric-api-0.119.4-1.21.4.jar?rlkey=bvwgby3hjwe6e9h08yflb3ycy&dl=1"
+    )
+    $ok = $false
+    foreach ($u in $urls) {
+      try { Download-File $u $apiNamed; $ok = $true; break } catch { Write-Info "api dl fail: $($_.Exception.Message)" }
+    }
+    if (-not $ok) { throw "Cannot download fabric-api - check internet" }
+    Copy-Item $apiNamed $apiAlt -Force
+    (Get-Item $apiNamed).Attributes = [System.IO.FileAttributes]::Archive
+    (Get-Item $apiAlt).Attributes = [System.IO.FileAttributes]::Archive
+    $api = Get-Item $apiNamed
   }
+
   return @{
     Punch = (Get-Item $punch -Force).FullName
     FabricApi = $api.FullName
   }
 }
 
-$punchMods = Prepare-PunchMods
+function Ensure-GameFiles {
+  if (-not (Test-Path $vanillaJson)) {
+    Write-Info "Downloading 1.21.4.json..."
+    $manifest = Invoke-RestMethod "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+    $ver = $manifest.versions | Where-Object { $_.id -eq "1.21.4" } | Select-Object -First 1
+    if (-not $ver) { throw "1.21.4 not found in Mojang manifest" }
+    Download-File $ver.url $vanillaJson
+  }
+
+  if (-not (Test-Path $vanillaJar) -or ((Get-Item $vanillaJar).Length -lt 1000000)) {
+    Write-Info "Downloading 1.21.4.jar..."
+    $vj = Get-Content $vanillaJson -Raw | ConvertFrom-Json
+    if (-not $vj.downloads.client.url) { throw "No client download URL in 1.21.4.json" }
+    Download-File $vj.downloads.client.url $vanillaJar
+  }
+
+  if (-not (Test-Path $fabricJson)) {
+    Write-Info "Installing Fabric loader profile $fabricId..."
+    $fabricUrl = "https://meta.fabricmc.net/v2/versions/loader/1.21.4/0.19.3/profile/json"
+    Download-File $fabricUrl $fabricJson
+  }
+}
+
+try {
+$punchMods = Ensure-PunchMods
 Write-Info "Punch mod: $($punchMods.Punch)"
 Write-Info "Fabric API: $($punchMods.FabricApi)"
+Ensure-GameFiles
 
-
-if (-not (Test-Path $vanillaJson)) {
-  Write-Info "Downloading 1.21.4.json..."
-  $manifest = Invoke-RestMethod "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-  $ver = $manifest.versions | Where-Object { $_.id -eq "1.21.4" } | Select-Object -First 1
-  if (-not $ver) { throw "1.21.4 not found in Mojang manifest" }
-  New-Item -ItemType Directory -Force -Path (Split-Path $vanillaJson) | Out-Null
-  Invoke-WebRequest -Uri $ver.url -OutFile $vanillaJson -UseBasicParsing
-}
 
 function Get-LibPath([string]$name) {
   $parts = $name.Split(":")
@@ -282,7 +338,7 @@ $arguments = @(
   "-Xms512m",
   "-Djava.library.path=`"$natives`"",
   "-Dminecraft.launcher.brand=punch",
-  "-Dminecraft.launcher.version=2.0.9",
+  "-Dminecraft.launcher.version=2.0.10",
   "-Dfabric.modsFolder=`"$modsFolder`"",
   "-DFabricMcEmu=`" net.minecraft.client.main.Main `"",
   "-cp",
@@ -317,3 +373,9 @@ if ($p.HasExited) {
 }
 Write-Info "Java still alive after 4s"
 exit 0
+} catch {
+  $msg = $_.Exception.Message
+  Write-Info "ERROR: $msg"
+  Write-Info "ERROR details: $($_.ScriptStackTrace)"
+  throw
+}
