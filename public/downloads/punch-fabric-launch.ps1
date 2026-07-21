@@ -1,4 +1,4 @@
-# Punch Fabric launcher — mods installed by punch-loader; this starts Minecraft 1.21.4 + Fabric.
+﻿# Punch Fabric launcher - mods installed by punch-loader; this starts Minecraft 1.21.4 + Fabric.
 param(
   [int]$RamMb = 4096,
   [string]$Username = "Player",
@@ -32,7 +32,7 @@ function Prepare-PunchMods {
   New-Item -ItemType Directory -Force -Path $modsDir | Out-Null
   New-Item -ItemType Directory -Force -Path $disabledDir | Out-Null
 
-  # Fabric Loader skips Windows Hidden jars — clear H/S from punch + fabric-api.
+  # Fabric Loader skips Windows Hidden jars - clear H/S from punch + fabric-api.
   Get-ChildItem $modsDir -Force -Filter "*.jar" -ErrorAction SilentlyContinue | ForEach-Object {
     $n = $_.Name.ToLowerInvariant()
     $keep = ($n -eq "punch-2.0.jar") -or ($n -like "fabric-api*.jar")
@@ -43,7 +43,7 @@ function Prepare-PunchMods {
       Write-Info "Disabling conflicting mod: $($_.Name)"
       $dest = Join-Path $disabledDir $_.Name
       if (Test-Path $dest) { Remove-Item $dest -Force -ErrorAction SilentlyContinue }
-      # May be hidden — force move
+      # May be hidden - force move
       $_.Attributes = [System.IO.FileAttributes]::Archive
       Move-Item $_.FullName $dest -Force
     }
@@ -53,10 +53,10 @@ function Prepare-PunchMods {
   $api = Get-ChildItem $modsDir -Force -Filter "fabric-api*.jar" -ErrorAction SilentlyContinue |
     Where-Object { $_.Length -gt 100000 } | Select-Object -First 1
   if (-not (Test-Path $punch) -or ((Get-Item $punch -Force).Length -lt 1000000)) {
-    throw "punch-2.0.jar missing in .minecraft\mods — re-run Punch launcher to download"
+    throw "punch-2.0.jar missing in .minecraft\mods - re-run Punch launcher to download"
   }
   if (-not $api) {
-    throw "fabric-api missing in .minecraft\mods — re-run Punch launcher to download"
+    throw "fabric-api missing in .minecraft\mods - re-run Punch launcher to download"
   }
   return @{
     Punch = (Get-Item $punch -Force).FullName
@@ -144,7 +144,7 @@ function Collect-Classpath($jsonPath) {
     }
     if (-not $p) { $p = Get-LibPath $lib.name }
 
-    # Fabric maven libs without downloads.artifact — download from url base if missing
+    # Fabric maven libs without downloads.artifact - download from url base if missing
     if ($p -and -not (Test-Path $p) -and $lib.url) {
       $rel = ($p.Substring($libsRoot.Length).TrimStart("\")).Replace("\", "/")
       $url = $lib.url.TrimEnd("/") + "/" + $rel
@@ -224,7 +224,7 @@ function Ensure-Natives($jsonPath, $outDir) {
 }
 
 $cp = New-Object System.Collections.Generic.List[string]
-# Fabric libs first (ASM 9.10.1 etc.), then vanilla — skip vanilla org.ow2.asm* to avoid duplicates
+# Fabric libs first (ASM 9.10.1 etc.), then vanilla - skip vanilla org.ow2.asm* to avoid duplicates
 foreach ($p in (Collect-Classpath $fabricJson)) { [void]$cp.Add($p) }
 foreach ($p in (Collect-Classpath $vanillaJson)) {
   if ($p -match '[\\/]org[\\/]ow2[\\/]asm[\\/]') { continue }
@@ -274,7 +274,7 @@ try {
 
 $main = "net.fabricmc.loader.impl.launch.knot.KnotClient"
 
-# IMPORTANT: one Arguments string — Start-Process array form breaks classpath on ';'
+# IMPORTANT: one Arguments string - Start-Process array form breaks classpath on ';'
 $modsFolder = Join-Path $mc "mods"
 
 $arguments = @(
@@ -282,7 +282,7 @@ $arguments = @(
   "-Xms512m",
   "-Djava.library.path=`"$natives`"",
   "-Dminecraft.launcher.brand=punch",
-  "-Dminecraft.launcher.version=2.0.7",
+  "-Dminecraft.launcher.version=2.0.9",
   "-Dfabric.modsFolder=`"$modsFolder`"",
   "-DFabricMcEmu=`" net.minecraft.client.main.Main `"",
   "-cp",
