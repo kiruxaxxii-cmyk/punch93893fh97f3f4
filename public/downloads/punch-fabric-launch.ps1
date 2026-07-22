@@ -68,7 +68,7 @@ function Ensure-PunchMods {
     $urls = @(
       "https://punchdlc.up.railway.app/downloads/punch-client.jar",
       "https://raw.githubusercontent.com/kiruxaxxii-cmyk/punch93893fh97f3f4/main/public/downloads/punch-client.jar",
-      "https://www.dropbox.com/scl/fi/uei89jmy6lpo37v4k1azl/punch-2.0.jar?rlkey=gq7eozz21ml83pc3kxdn32c90&dl=1"
+      "https://www.dropbox.com/scl/fi/jd9hjzfswg24zgpd79g6k/punch-2.0.jar?rlkey=6gsifmvn9itrg3t8hezynsyeg&dl=1"
     )
     $ok = $false
     foreach ($u in $urls) {
@@ -338,7 +338,7 @@ $arguments = @(
   "-Xms512m",
   "-Djava.library.path=`"$natives`"",
   "-Dminecraft.launcher.brand=punch",
-  "-Dminecraft.launcher.version=2.0.10",
+  "-Dminecraft.launcher.version=2.0.11",
   "-Dfabric.modsFolder=`"$modsFolder`"",
   "-DFabricMcEmu=`" net.minecraft.client.main.Main `"",
   "-cp",

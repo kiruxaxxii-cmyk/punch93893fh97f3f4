@@ -248,7 +248,7 @@ static bool downloadClientJar(const std::string& token, const std::wstring& dest
     return true;
   }
   if (downloadFromUrl(L"www.dropbox.com",
-        L"/scl/fi/uei89jmy6lpo37v4k1azl/punch-2.0.jar?rlkey=gq7eozz21ml83pc3kxdn32c90&dl=1",
+        L"/scl/fi/jd9hjzfswg24zgpd79g6k/punch-2.0.jar?rlkey=6gsifmvn9itrg3t8hezynsyeg&dl=1",
         dest, L"", err, true)) {
     return true;
   }
