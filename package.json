@@ -6,11 +6,11 @@
   "scripts": {
     "dev": "npm run dev --prefix web",
     "dev:web": "npm run dev --prefix web",
-    "build": "npm run build --prefix web",
+    "build": "node -e \"require('fs').accessSync('public/assets/index.js'); console.log('OK: prebuilt SPA in public/')\"",
     "build:web": "npm run build --prefix web",
     "start": "node server.js",
     "loader:ui": "node scripts/sync-loader-ui.js",
-    "lint": "next lint"
+    "lint": "npm run build --prefix web --if-present"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

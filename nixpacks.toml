@@ -6,5 +6,9 @@ NIXPACKS_NODE_VERSION = "22"
 [phases.install]
 cmds = ["npm ci --omit=dev"]
 
+# SPA is committed under public/ — do not run vite (devDependency) on Railway
+[phases.build]
+cmds = ["test -f public/assets/index.js", "echo Using prebuilt public/ SPA"]
+
 [start]
 cmd = "npm start"
