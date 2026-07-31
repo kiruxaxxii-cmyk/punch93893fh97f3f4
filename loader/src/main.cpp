@@ -29,6 +29,9 @@ using Microsoft::WRL::ComPtr;
 #define WM_WEBVIEW_JSON (WM_USER + 101)
 
 static const wchar_t* SITE_URL = L"https://punchdlc.up.railway.app";
+static const wchar_t* API_HOST = L"punchdlc.up.railway.app";
+static const INTERNET_PORT API_PORT = INTERNET_DEFAULT_HTTPS_PORT;
+static const bool API_SECURE = true;
 static const int MAIN_W = 920;
 static const int MAIN_H = 540;
 static const int EXTRA_W = 0;
@@ -300,11 +303,9 @@ static bool verifyEntitlement(const std::string& token, std::string& err) {
   DWORD status = 0;
   std::string body, herr;
   std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
-  if (!httpJson(L"GET", L"localhost", 3001, false, L"/api/profile", auth, "", status, body, herr)) {
-    if (!httpJson(L"GET", L"punchdlc.up.railway.app", INTERNET_DEFAULT_HTTPS_PORT, true, L"/api/profile", auth, "", status, body, herr)) {
-      err = herr.empty() ? "Offline" : herr;
-      return false;
-    }
+  if (!httpJson(L"GET", API_HOST, API_PORT, API_SECURE, L"/api/profile", auth, "", status, body, herr)) {
+    err = herr.empty() ? "Offline" : herr;
+    return false;
   }
   if (status != 200) {
     err = "Auth expired";
@@ -521,11 +522,7 @@ static void forceUpdateShutdown(const std::wstring& message) {
 
 static bool downloadLauncherBinary(const std::string& token, const std::wstring& dest, std::string& err) {
   std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
-  if (downloadFromUrl(L"localhost", 3001, L"/api/loader/binary", dest, auth, err, false)) return true;
-  if (downloadFromUrl(L"punchdlc.up.railway.app", INTERNET_DEFAULT_HTTPS_PORT, L"/api/loader/binary", dest, auth, err, true)) {
-    return true;
-  }
-  return false;
+  return downloadFromUrl(API_HOST, API_PORT, L"/api/loader/binary", dest, auth, err, API_SECURE);
 }
 
 static void silentSelfUpdate() {
@@ -981,7 +978,7 @@ static bool runVirtuGuardGate() {
 
   DWORD status = 0;
   std::string response, err;
-  if (!httpJson(L"POST", L"localhost", 3001, false, L"/api/login", L"", body.str(), status, response, err)) {
+  if (!httpJson(L"POST", API_HOST, API_PORT, API_SECURE, L"/api/login", L"", body.str(), status, response, err)) {
     std::cout << "  " << err << "\n";
     Sleep(3000);
     FreeConsole();
@@ -1007,7 +1004,7 @@ static bool runVirtuGuardGate() {
   std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
   DWORD pStatus = 0;
   std::string profile, perr;
-  if (!httpJson(L"GET", L"localhost", 3001, false, L"/api/profile", auth, "", pStatus, profile, perr)) {
+  if (!httpJson(L"GET", API_HOST, API_PORT, API_SECURE, L"/api/profile", auth, "", pStatus, profile, perr)) {
     std::cout << "  " << perr << "\n";
     Sleep(3000);
     FreeConsole();
