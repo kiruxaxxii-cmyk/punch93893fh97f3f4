@@ -295,12 +295,15 @@ Ensure-Natives -jsonPath $vanillaJson -outDir $natives
 function Resolve-Java {
   param([string]$Hint)
   if ($Hint -and (Test-Path $Hint)) { return $Hint }
-  $candidates = @()
-  Get-ChildItem "C:\Program Files\Java" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    $candidates += (Join-Path $_.FullName "bin\javaw.exe")
+  if ($env:JAVA_HOME) {
+    $jh = Join-Path $env:JAVA_HOME "bin\javaw.exe"
+    if (Test-Path $jh) { return $jh }
   }
-  Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "21" } | ForEach-Object {
-    $candidates += (Join-Path $_.FullName "bin\javaw.exe")
+  $candidates = @()
+  foreach ($root in @("C:\Program Files\Java", "C:\Program Files\Eclipse Adoptium", "C:\Program Files\Microsoft", "C:\Program Files\Amazon Corretto")) {
+    Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+      $candidates += (Join-Path $_.FullName "bin\javaw.exe")
+    }
   }
   $candidates += @(
     "C:\Program Files\Java\jdk-21.0.10\bin\javaw.exe",
@@ -309,7 +312,7 @@ function Resolve-Java {
   foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
   $cmd = Get-Command javaw.exe -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
-  throw "Java 21+ not found"
+  throw "Java 21+ (javaw.exe) not found. Install Temurin/Oracle JDK 21."
 }
 
 $java = Resolve-Java -Hint $JavaPath
@@ -362,16 +365,18 @@ $psi.UseShellExecute = $false
 $p = [System.Diagnostics.Process]::Start($psi)
 if (-not $p) { throw "Failed to start Java process" }
 Write-Info "PID $($p.Id)"
+$pidFile = Join-Path $env:TEMP "punch-game.pid"
+Set-Content -Path $pidFile -Value "$($p.Id)" -Encoding ASCII
 
-Start-Sleep -Seconds 4
+Start-Sleep -Seconds 5
 if ($p.HasExited) {
-  throw "Java exited immediately (code $($p.ExitCode)). See $logFile and .minecraft/logs"
+  throw "Java exited immediately (code $($p.ExitCode)). See $logFile and %APPDATA%\.minecraft\logs\latest.log"
 }
-Write-Info "Java still alive after 4s"
+Write-Info "Java still alive after 5s"
 exit 0
 } catch {
   $msg = $_.Exception.Message
   Write-Info "ERROR: $msg"
   Write-Info "ERROR details: $($_.ScriptStackTrace)"
-  throw
+  exit 1
 }

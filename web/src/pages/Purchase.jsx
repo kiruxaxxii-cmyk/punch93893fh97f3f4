@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { theme } from "../lib/theme.js";
 import { apiCreatePayment, apiPaymentPlans, errorMessage } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { useLanguage } from "../lib/lang.jsx";
@@ -90,7 +89,7 @@ export default function PurchasePage() {
   }
 
   return (
-    <section className="route-page purchase-page" style={theme.sectionColorVars}>
+    <section className="route-page purchase-page">
       <div className="purchase-page__layout">
         <BlurPanel as="article" className="purchase-page__visual-card" delay={0}>
           <div className="purchase-page__visual" style={{ "--product-accent": planTierColor(plan) }}>

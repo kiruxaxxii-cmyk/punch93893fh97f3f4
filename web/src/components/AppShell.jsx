@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { preloadRoute } from "../lib/api.js";
-import { theme } from "../lib/theme.js";
+import { useSiteTheme } from "../lib/siteTheme.jsx";
 import LightRays from "./LightRays.jsx";
 import Header from "./Header.jsx";
 import Footer from "./Footer.jsx";
 import LanguageSwitcher from "./LanguageSwitcher.jsx";
+import ThemeSwitcher from "./ThemeSwitcher.jsx";
 import CircleLoader from "./CircleLoader.jsx";
+import SmoothScroll from "./SmoothScroll.jsx";
 
 function ScrollToTop() {
   const { pathname, search } = useLocation();
   useEffect(() => {
+    const main = document.querySelector(".app-shell__main");
+    if (main && main.scrollHeight > main.clientHeight + 1) main.scrollTop = 0;
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [pathname, search]);
   return null;
@@ -18,6 +22,7 @@ function ScrollToTop() {
 
 export default function AppShell() {
   const location = useLocation();
+  const { theme } = useSiteTheme();
   const [loading, setLoading] = useState(false);
   const counter = useRef(0);
 
@@ -40,20 +45,20 @@ export default function AppShell() {
 
   return (
     <div className="app-shell">
+      <SmoothScroll />
       <ScrollToTop />
       <div className="app-shell__background" aria-hidden="true">
         <LightRays
-          raysOrigin="top-center"
           raysColor={theme.raysColor}
-          raysSpeed={1.2}
-          lightSpread={5}
-          rayLength={7}
+          raysSpeed={1.05}
+          lightSpread={5.8}
+          rayLength={7.6}
           pulsating={false}
-          fadeDistance={2.3}
-          saturation={1}
+          fadeDistance={2.5}
+          saturation={1.15}
           followMouse={true}
-          mouseInfluence={0.05}
-          noiseAmount={0.6}
+          mouseInfluence={0.07}
+          noiseAmount={0.35}
           distortion={0}
           className="h-full w-full opacity-100"
         />
@@ -66,6 +71,7 @@ export default function AppShell() {
       </main>
       <Footer />
       <LanguageSwitcher />
+      <ThemeSwitcher />
       <CircleLoader visible={loading} />
     </div>
   );

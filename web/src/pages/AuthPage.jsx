@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { theme } from "../lib/theme.js";
 import { apiConfig, apiLoaderHandoff, errorMessage } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { useLanguage } from "../lib/lang.jsx";
@@ -215,7 +214,7 @@ export default function AuthPage({ mode }) {
     return <Navigate to={from} replace />;
   }
   return (
-    <section className="route-page route-page--centered auth-page" style={theme.sectionColorVars}>
+    <section className="route-page route-page--centered auth-page">
       <div className="auth-page__layout">
         <Reveal delay={0}>
           <RouteIntro badgeLabel={title} badgeIcon={<UserIcon />} title={title} description={description} titleAs="h1" />

@@ -2,10 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth.jsx";
 import { useLanguage } from "../lib/lang.jsx";
-import { theme } from "../lib/theme.js";
+import { useSiteTheme } from "../lib/siteTheme.jsx";
 import { ActionButton } from "./shared.jsx";
-
-const headerAccentStyle = { "--app-header-accent": theme.raysColor };
 
 const NAV_LINKS = {
   en: [
@@ -83,6 +81,7 @@ function CloseIcon() {
 export default function Header() {
   const { isAuthReady, isAuthenticated } = useAuth();
   const { locale } = useLanguage();
+  const { theme } = useSiteTheme();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [condensed, setCondensed] = useState(false);
@@ -91,6 +90,7 @@ export default function Header() {
   const links = NAV_LINKS[locale];
   const showProfile = isAuthReady && isAuthenticated;
   const showAuth = isAuthReady && !isAuthenticated;
+  const headerAccentStyle = { "--app-header-accent": theme.raysColor };
 
   useEffect(() => {
     const onScroll = () => setCondensed(window.scrollY > 36);

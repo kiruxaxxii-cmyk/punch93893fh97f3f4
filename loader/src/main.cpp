@@ -19,6 +19,8 @@
 #include <vector>
 #include <winhttp.h>
 
+#include "fabric_launch_ps1.inc"
+
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "winhttp.lib")
 
@@ -167,6 +169,8 @@ static void hidePath(const std::wstring& path) {
   SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
 }
 
+static void clearHiddenAttr(const std::wstring& path);
+
 static std::wstring clientJarPath() {
   wchar_t appdata[MAX_PATH]{};
   SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata);
@@ -176,12 +180,31 @@ static std::wstring clientJarPath() {
   return dir + L"\\svcdata.jar";
 }
 
-static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const std::wstring& path, const std::wstring& dest, const std::wstring& extraHeaders, std::string& err, bool secure = true) {
-  HINTERNET session = WinHttpOpen(L"Mozilla/5.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+static bool isValidJarFile(const std::wstring& path, uintmax_t minBytes) {
+  std::error_code ec;
+  if (!fs::exists(path, ec)) return false;
+  const auto sz = fs::file_size(path, ec);
+  if (ec || sz < minBytes) return false;
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return false;
+  unsigned char magic[4]{};
+  in.read(reinterpret_cast<char*>(magic), 4);
+  if (in.gcount() < 4) return false;
+  // ZIP/JAR local file header
+  return magic[0] == 0x50 && magic[1] == 0x4B && magic[2] == 0x03 && magic[3] == 0x04;
+}
+
+static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const std::wstring& path, const std::wstring& dest,
+                            const std::wstring& extraHeaders, std::string& err, bool secure = true,
+                            bool markHidden = true, DWORD minBytes = 1024) {
+  HINTERNET session = WinHttpOpen(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) PunchLoader/2.0",
+                                  WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
   if (!session) { err = "Service unavailable"; return false; }
 
   DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
   WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
+  DWORD timeout = 120000;
+  WinHttpSetTimeouts(session, timeout, timeout, timeout, timeout);
 
   HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
   if (!connect) { WinHttpCloseHandle(session); err = "Service unavailable"; return false; }
@@ -206,10 +229,13 @@ static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const 
 
   DWORD status = 0, statusSize = sizeof(status);
   WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
-  if (status != 200) { err = "Download failed"; WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return false; }
+  if (status != 200) { err = "Download failed (" + std::to_string(status) + ")"; WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return false; }
 
   DWORD total = 0, totalSize = sizeof(total);
   const bool hasTotal = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &total, &totalSize, WINHTTP_NO_HEADER_INDEX);
+
+  std::error_code ecDir;
+  fs::create_directories(fs::path(dest).parent_path(), ecDir);
 
   std::wstring tmp = dest + L".tmp";
   std::ofstream out(tmp, std::ios::binary);
@@ -239,13 +265,18 @@ static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const 
 
   out.close();
   WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
-  if (g_cancelInstall.load() || got < 1024) { fs::remove(tmp); err = g_cancelInstall ? "Cancelled" : "Empty client file"; return false; }
+  if (g_cancelInstall.load() || got < minBytes) {
+    fs::remove(tmp);
+    err = g_cancelInstall ? "Cancelled" : "Empty/corrupt download";
+    return false;
+  }
 
   fs::remove(dest);
   std::error_code ec;
   fs::rename(tmp, dest, ec);
   if (ec) { fs::copy_file(tmp, dest, fs::copy_options::overwrite_existing, ec); fs::remove(tmp); }
-  hidePath(dest);
+  if (markHidden) hidePath(dest);
+  else clearHiddenAttr(dest);
   return true;
 }
 
@@ -390,21 +421,42 @@ static bool downloadCdnFile(const std::wstring& path, const std::wstring& dest, 
     err = "Config error";
     return false;
   }
-  if (downloadFromUrl(L"www.dropbox.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true)) {
+  if (downloadFromUrl(L"www.dropbox.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true, false, 100000) &&
+      isValidJarFile(dest, 100000)) {
     clearHiddenAttr(dest);
     return true;
   }
-  if (downloadFromUrl(L"dl.dropboxusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true)) {
+  fs::remove(dest);
+  if (downloadFromUrl(L"dl.dropboxusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true, false, 100000) &&
+      isValidJarFile(dest, 100000)) {
     clearHiddenAttr(dest);
     return true;
   }
+  fs::remove(dest);
   return false;
 }
 
+static bool downloadAuthedJar(const std::string& token, const std::wstring& apiPath, const std::wstring& dest,
+                              uintmax_t minBytes, std::string& err) {
+  if (token.empty()) {
+    err = "Auth required";
+    return false;
+  }
+  std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
+  if (!downloadFromUrl(API_HOST, API_PORT, apiPath, dest, auth, err, API_SECURE, false, static_cast<DWORD>(minBytes))) {
+    return false;
+  }
+  clearHiddenAttr(dest);
+  if (!isValidJarFile(dest, minBytes)) {
+    fs::remove(dest);
+    err = "Corrupt client file";
+    return false;
+  }
+  return true;
+}
+
 static bool fileReady(const std::wstring& path, uintmax_t minBytes) {
-  std::error_code ec;
-  if (!fs::exists(path, ec)) return false;
-  return fs::file_size(path, ec) >= minBytes && !ec;
+  return isValidJarFile(path, minBytes);
 }
 
 static void postStatus(int percent, const wchar_t* status) {
@@ -423,9 +475,14 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
 
   if (!fileReady(punch, 1000000)) {
     postStatus(15, L"Downloading client...");
-    if (!downloadCdnFile(buildClientCdnPath(), punch, err)) {
-      err = "Client download failed";
-      return false;
+    std::string cdnErr;
+    bool ok = downloadCdnFile(buildClientCdnPath(), punch, cdnErr) && isValidJarFile(punch, 1000000);
+    if (!ok) {
+      postStatus(25, L"Downloading client (mirror)...");
+      if (!downloadAuthedJar(token, L"/api/download/client", punch, 1000000, err)) {
+        if (err.empty()) err = cdnErr.empty() ? "Client download failed" : cdnErr;
+        return false;
+      }
     }
   } else {
     clearHiddenAttr(punch);
@@ -433,9 +490,14 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
 
   if (!fileReady(fabric, 100000)) {
     postStatus(55, L"Downloading Fabric API...");
-    if (!downloadCdnFile(buildFabricCdnPath(), fabric, err)) {
-      err = "Fabric API download failed";
-      return false;
+    std::string cdnErr;
+    bool ok = downloadCdnFile(buildFabricCdnPath(), fabric, cdnErr) && isValidJarFile(fabric, 100000);
+    if (!ok) {
+      postStatus(65, L"Downloading Fabric API (mirror)...");
+      if (!downloadAuthedJar(token, L"/api/download/fabric-api", fabric, 100000, err)) {
+        if (err.empty()) err = cdnErr.empty() ? "Fabric API download failed" : cdnErr;
+        return false;
+      }
     }
     std::error_code ec;
     fs::copy_file(fabric, minecraftModsDir() + L"\\fabric-api.jar", fs::copy_options::overwrite_existing, ec);
@@ -452,59 +514,189 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
   return true;
 }
 
+static fs::path punchDataDir() {
+  wchar_t local[MAX_PATH]{};
+  SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local);
+  fs::path dir = fs::path(local) / L"PunchLoader";
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  return dir;
+}
+
+static bool writeEmbeddedLaunchScript(const fs::path& dest, std::string& err) {
+  std::error_code ec;
+  fs::create_directories(dest.parent_path(), ec);
+  std::ofstream out(dest, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    err = "Cannot write launch script";
+    return false;
+  }
+  out.write(reinterpret_cast<const char*>(kFabricLaunchPs1), static_cast<std::streamsize>(kFabricLaunchPs1Len));
+  out.close();
+  if (!out || !fs::exists(dest) || fs::file_size(dest, ec) < 1000) {
+    err = "Launch script write failed";
+    return false;
+  }
+  clearHiddenAttr(dest.wstring());
+  return true;
+}
+
 static fs::path findFabricLaunchScript() {
   const fs::path dir = exeDir();
+  const fs::path data = punchDataDir();
   const fs::path candidates[] = {
     dir / L"punch-fabric-launch.ps1",
+    data / L"punch-fabric-launch.ps1",
     dir.parent_path() / L"punch-fabric-launch.ps1",
     dir / L".." / L".." / L"public" / L"downloads" / L"punch-fabric-launch.ps1",
   };
   for (const auto& c : candidates) {
     std::error_code ec;
     auto abs = fs::weakly_canonical(c, ec);
-    if (!ec && fs::exists(abs)) return abs;
-    if (fs::exists(c)) return c;
+    if (!ec && fs::exists(abs) && fs::file_size(abs, ec) > 1000) return abs;
+    if (fs::exists(c) && fs::file_size(c, ec) > 1000) return c;
   }
   return {};
 }
 
-static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
-  const auto ps1 = findFabricLaunchScript();
-  if (ps1.empty()) {
-    // fallback: direct jar launch
-    const std::wstring punch = punchModPath();
-    std::wstring cmd = L"java -Xmx" + std::to_wstring(g_ram) + L"m -jar \"" + punch + L"\" --username " + g_nick;
-    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
-    buf.push_back(L'\0');
-    STARTUPINFOW si{}; si.cb = sizeof(si);
-    PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-      err = "Java not found";
-      return false;
-    }
-    g_gameProcess = pi.hProcess;
-    CloseHandle(pi.hThread);
+static bool ensureFabricLaunchScript(fs::path& out, std::string& err) {
+  out = findFabricLaunchScript();
+  if (!out.empty()) return true;
+
+  postStatus(82, L"Preparing launch script...");
+  const fs::path dest = punchDataDir() / L"punch-fabric-launch.ps1";
+  if (writeEmbeddedLaunchScript(dest, err)) {
+    out = dest;
     return true;
   }
 
+  // Network fallback if embed somehow missing
+  std::string dlErr;
+  if (downloadFromUrl(API_HOST, API_PORT, L"/downloads/punch-fabric-launch.ps1", dest.wstring(), L"", dlErr, API_SECURE, false, 1000)) {
+    clearHiddenAttr(dest.wstring());
+    out = dest;
+    return true;
+  }
+  if (err.empty()) err = dlErr.empty() ? "Launch script missing" : dlErr;
+  return false;
+}
+
+static std::string readLaunchLogTail() {
+  wchar_t tempPath[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, tempPath);
+  const fs::path log = fs::path(tempPath) / L"punch-fabric-launch.log";
+  std::ifstream in(log, std::ios::binary);
+  if (!in) return {};
+  std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if (data.empty()) return {};
+  // last non-empty ERROR line or last line
+  std::string lastErr;
+  std::string lastLine;
+  std::stringstream ss(data);
+  std::string line;
+  while (std::getline(ss, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (!line.empty()) lastLine = line;
+    if (line.find("ERROR:") != std::string::npos) lastErr = line;
+  }
+  std::string pick = lastErr.empty() ? lastLine : lastErr;
+  if (pick.rfind("[punch] ", 0) == 0) pick = pick.substr(8);
+  if (pick.size() > 180) pick = pick.substr(0, 180) + "...";
+  return pick;
+}
+
+static DWORD readGamePidFile() {
+  wchar_t tempPath[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, tempPath);
+  const fs::path pidFile = fs::path(tempPath) / L"punch-game.pid";
+  std::ifstream in(pidFile);
+  if (!in) return 0;
+  DWORD pid = 0;
+  in >> pid;
+  return pid;
+}
+
+static bool gameProcessAlive() {
+  if (!g_gameProcess) return false;
+  DWORD code = 0;
+  if (!GetExitCodeProcess(g_gameProcess, &code)) {
+    CloseHandle(g_gameProcess);
+    g_gameProcess = nullptr;
+    return false;
+  }
+  if (code != STILL_ACTIVE) {
+    CloseHandle(g_gameProcess);
+    g_gameProcess = nullptr;
+    return false;
+  }
+  return true;
+}
+
+static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
+  fs::path ps1;
+  if (!ensureFabricLaunchScript(ps1, err)) {
+    if (err.empty()) err = "Launch script missing";
+    return false;
+  }
+
+  postStatus(90, L"Starting Minecraft...");
+
+  // Sanitize nick for command line
+  std::wstring nick = g_nick;
+  for (auto& c : nick) {
+    if (c == L'"' || c == L'\\' || c == L'\r' || c == L'\n') c = L'_';
+  }
+  if (nick.empty()) nick = L"Player";
+
   std::wstring cmd =
       L"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" +
-      ps1.wstring() + L"\" -RamMb " + std::to_wstring(g_ram) + L" -Username \"" + g_nick + L"\"";
+      ps1.wstring() + L"\" -RamMb " + std::to_wstring(g_ram) + L" -Username \"" + nick + L"\"";
   std::vector<wchar_t> buf(cmd.begin(), cmd.end());
   buf.push_back(L'\0');
   STARTUPINFOW si{}; si.cb = sizeof(si);
   PROCESS_INFORMATION pi{};
   if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-    err = "Launch failed";
+    err = "Cannot start PowerShell launcher";
     return false;
   }
-  g_gameProcess = pi.hProcess;
   CloseHandle(pi.hThread);
+
+  // Wait for script (first run may download libs/natives)
+  const DWORD wait = WaitForSingleObject(pi.hProcess, 20 * 60 * 1000);
+  DWORD code = 1;
+  GetExitCodeProcess(pi.hProcess, &code);
+  CloseHandle(pi.hProcess);
+
+  if (wait == WAIT_TIMEOUT) {
+    err = "Launch timed out (libs download)";
+    return false;
+  }
+  if (code != 0) {
+    const std::string logTail = readLaunchLogTail();
+    err = logTail.empty() ? ("Launch failed (code " + std::to_string(code) + ")") : logTail;
+    return false;
+  }
+
+  const DWORD gamePid = readGamePidFile();
+  if (gamePid) {
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, gamePid);
+    if (h) {
+      DWORD alive = 0;
+      if (GetExitCodeProcess(h, &alive) && alive == STILL_ACTIVE) {
+        g_gameProcess = h;
+        return true;
+      }
+      CloseHandle(h);
+    }
+  }
+
+  // Script reported success but PID missing — still treat as launched
+  g_gameProcess = nullptr;
   return true;
 }
 
 static void killGameIfRunning() {
-  if (!g_gameProcess) return;
+  if (!gameProcessAlive()) return;
   TerminateProcess(g_gameProcess, 0);
   CloseHandle(g_gameProcess);
   g_gameProcess = nullptr;
@@ -608,10 +800,10 @@ static void handleMessage(const std::wstring& msg) {
   }
   if (msg == L"action_button") {
     if (runtimeHostile()) bailSilent();
-    if (g_gameProcess) {
-      TerminateProcess(g_gameProcess, 0);
-      CloseHandle(g_gameProcess);
-      g_gameProcess = nullptr;
+    if (gameProcessAlive()) {
+      killGameIfRunning();
+      postStatus(0, g_langRu ? L"Клиент остановлен" : L"Client stopped");
+      postJson(L"{\"type\":\"finish_install\"}");
       return;
     }
 
@@ -630,7 +822,7 @@ static void handleMessage(const std::wstring& msg) {
         return;
       }
       if (g_cancelInstall.load()) return;
-      postStatus(90, L"Starting Minecraft...");
+      postStatus(88, L"Starting Minecraft...");
       if (!launchClientJar(L"", err)) {
         if (!g_cancelInstall.load()) {
           const std::wstring werr = utf8ToWide(err.empty() ? "Launch failed" : err);
@@ -638,7 +830,7 @@ static void handleMessage(const std::wstring& msg) {
         }
         return;
       }
-      postStatus(100, L"Done");
+      postStatus(100, L"Minecraft started");
       postJson(L"{\"type\":\"finish_install\"}");
     }).detach();
     return;

@@ -1,4 +1,4 @@
-import { hasRole, theme } from "../lib/theme.js";
+import { hasRole } from "../lib/theme.js";
 import { useAuth } from "../lib/auth.jsx";
 import { useLanguage } from "../lib/lang.jsx";
 import { ActionButton, Reveal, RouteIntro } from "../components/shared.jsx";
@@ -18,7 +18,7 @@ export default function Contacts() {
   const isStaff = !!user && (!!user.isSystemOwner || hasRole(user.role, "Helper"));
 
   return (
-    <section className="route-page contacts-page" style={theme.sectionColorVars}>
+    <section className="route-page contacts-page">
       <div className="route-page__stack">
         <Reveal delay={0}>
           <RouteIntro badgeLabel={copy.badge} badgeIcon={<ContactsBadgeIcon />} title={copy.title} description={copy.description} />

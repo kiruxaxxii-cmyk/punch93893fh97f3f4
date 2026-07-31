@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { theme } from "../lib/theme.js";
 import { apiPaymentPlans, errorMessage } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { useLanguage } from "../lib/lang.jsx";
@@ -73,7 +72,7 @@ export default function ProductsPage() {
   }, [copy.unavailableFallback, copy.unavailableTitle, pushNotice]);
 
   return (
-    <section className="route-page products-page" style={theme.sectionColorVars}>
+    <section className="route-page products-page">
       <div className="route-page__stack">
         <Reveal delay={0}>
           <RouteIntro badgeLabel={copy.badge} badgeIcon={<ProductsBadgeIcon />} title={copy.title} description={copy.description} />

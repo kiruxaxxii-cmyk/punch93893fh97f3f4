@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { theme } from "../lib/theme.js";
 import { useLanguage } from "../lib/lang.jsx";
 import { apiSiteStats } from "../lib/api.js";
 import { ActionButton, Reveal, BlurPanel } from "../components/shared.jsx";
@@ -44,9 +43,9 @@ function HeroSection() {
   const { locale } = useLanguage();
   const copy = HERO_COPY[locale];
   return (
-    <section id="home" className="hero-section" style={theme.heroColorVars}>
+    <section id="home" className="hero-section hero-section--enter">
       <div className="hero-section__content">
-        <div className="hero-section__badge-wrap">
+        <div className="hero-section__badge-wrap hero-enter" style={{ "--hero-enter-delay": "0ms" }}>
           <div className="hero-section__badge">
             <span className="hero-section__badge-icon" aria-hidden="true">
               <HeroBadgeIcon />
@@ -55,14 +54,22 @@ function HeroSection() {
           </div>
         </div>
         <h1 className="hero-section__title">
-          <span className="hero-section__title-line">{copy.titleTop}</span>
-          <span className="hero-section__title-line">{copy.titleBottom}</span>
+          <span className="hero-section__title-line hero-enter" style={{ "--hero-enter-delay": "120ms" }}>
+            {copy.titleTop}
+          </span>
+          <span className="hero-section__title-line hero-enter" style={{ "--hero-enter-delay": "240ms" }}>
+            {copy.titleBottom}
+          </span>
         </h1>
         <p className="hero-section__description">
-          <span className="hero-section__description-line">{copy.descriptionTop}</span>
-          <span className="hero-section__description-line">{copy.descriptionBottom}</span>
+          <span className="hero-section__description-line hero-enter" style={{ "--hero-enter-delay": "360ms" }}>
+            {copy.descriptionTop}
+          </span>
+          <span className="hero-section__description-line hero-enter" style={{ "--hero-enter-delay": "460ms" }}>
+            {copy.descriptionBottom}
+          </span>
         </p>
-        <div className="hero-section__actions">
+        <div className="hero-section__actions hero-enter" style={{ "--hero-enter-delay": "580ms" }}>
           <ActionButton to="/products" variant="primary" className="hero-section__button">
             <CartIcon />
             <span>{copy.products}</span>
@@ -81,7 +88,7 @@ function AboutSection() {
   const { locale } = useLanguage();
   const copy = ABOUT_COPY[locale];
   return (
-    <section id="about" className="about-section" style={theme.aboutColorVars}>
+    <section id="about" className="about-section">
       <Reveal as="div" className="about-section__inner about-section__inner--text-only" delay={0}>
         <div className="about-section__content">
           <div className="about-section__badge-wrap">
@@ -118,7 +125,7 @@ function AdvantagesSection() {
   const { locale } = useLanguage();
   const copy = ADVANTAGES_COPY[locale];
   return (
-    <section id="advantages" className="advantages-section" style={theme.sectionColorVars}>
+    <section id="advantages" className="advantages-section">
       <Reveal as="div" className="advantages-section__inner" delay={0}>
         <div className="advantages-section__intro">
           <div className="advantages-section__badge-wrap">
@@ -186,7 +193,7 @@ function ClientStatsSection() {
   }, []);
 
   return (
-    <section id="statistics" className="client-stats-section" style={theme.sectionColorVars}>
+    <section id="statistics" className="client-stats-section">
       <Reveal as="div" className="client-stats-section__inner" delay={0}>
         <div className="client-stats-section__intro">
           <div className="client-stats-section__badge-wrap">
@@ -234,7 +241,7 @@ function FaqSection() {
   const copy = FAQ_COPY[locale];
   const [open, setOpen] = useState(-1);
   return (
-    <section id="faq" className="faq-section" style={theme.sectionColorVars}>
+    <section id="faq" className="faq-section">
       <Reveal as="div" className="faq-section__inner" delay={0}>
         <div className="faq-section__intro">
           <div className="faq-section__badge-wrap">
@@ -278,7 +285,7 @@ function VideoReviewSection() {
   const { locale } = useLanguage();
   const copy = VIDEO_COPY[locale];
   return (
-    <section id="video-review" className="video-review-section" style={theme.sectionColorVars}>
+    <section id="video-review" className="video-review-section">
       <Reveal as="div" className="video-review-section__inner" delay={0}>
         <div className="video-review-section__intro">
           <div className="video-review-section__badge-wrap">

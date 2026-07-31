@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { theme, hasRole, isAdmin } from "../lib/theme.js";
+import { hasRole, isAdmin } from "../lib/theme.js";
 import {
   apiConfig,
   errorMessage,
@@ -453,7 +453,7 @@ export default function ProfilePage() {
             : copy.modal.twoFactor;
 
   return (
-    <section className="route-page profile-page" style={theme.sectionColorVars}>
+    <section className="route-page profile-page">
       <div className="profile-page__stack">
         <Reveal as="section" className="profile-page__hero" delay={0}>
           <BlurPanel className="profile-page__hero-panel">

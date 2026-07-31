@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { theme } from "../lib/theme.js";
+import { useSiteTheme } from "../lib/siteTheme.jsx";
 
 export function ActionButton(props) {
   const className = ("action-button action-button--" + (props.variant ?? "secondary") + " " + (props.className ?? "")).trim();
@@ -29,34 +29,46 @@ export function ActionButton(props) {
   );
 }
 
-export function Reveal({ as: Tag = "div", children, className, delay = 0, rootMargin = "0px 0px -10% 0px", style }) {
+export function Reveal({ as: Tag = "div", children, className, delay = 0, rootMargin = "0px 0px -8% 0px", style }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
   const mergedStyle = { ...style };
-  mergedStyle["--page-reveal-delay"] = delay + "ms";
+  mergedStyle["--page-reveal-delay"] = `${Math.max(0, Number(delay) || 0)}ms`;
 
   useEffect(() => {
     const node = ref.current;
-    if (!node) return;
+    if (!node) return undefined;
+
+    const show = () => setVisible(true);
+
+    const rect = node.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    if (rect.top < vh * 0.92 && rect.bottom > vh * 0.02) {
+      const t = window.setTimeout(show, Math.max(0, Number(delay) || 0) + 16);
+      return () => window.clearTimeout(t);
+    }
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) {
-          setVisible(true);
-          observer.unobserve(entry.target);
+          show();
+          observer.disconnect();
         }
       },
-      { rootMargin, threshold: 0.18 }
+      { root: null, rootMargin, threshold: [0, 0.05, 0.12] }
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [rootMargin]);
+  }, [delay, rootMargin]);
 
   return (
     <Tag
-      ref={(node) => {
-        ref.current = node;
-      }}
-      className={visible ? ("page-reveal page-reveal--visible " + (className ?? "")).trim() : ("page-reveal " + (className ?? "")).trim()}
+      ref={ref}
+      className={
+        visible
+          ? ("page-reveal page-reveal--soft page-reveal--visible " + (className ?? "")).trim()
+          : ("page-reveal page-reveal--soft " + (className ?? "")).trim()
+      }
       style={mergedStyle}
     >
       {children}
@@ -87,6 +99,7 @@ export function BlurPanel({ as: Tag = "div", children, className, delay, interac
 }
 
 export function Modal({ children, onClose, ariaLabelledBy }) {
+  const { theme } = useSiteTheme();
   useEffect(() => {
     document.documentElement.classList.add("app-modal-open");
     document.body.classList.add("app-modal-open");

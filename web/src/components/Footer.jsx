@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useLanguage } from "../lib/lang.jsx";
-import { theme } from "../lib/theme.js";
+import { useSiteTheme } from "../lib/siteTheme.jsx";
 import { ActionButton } from "./shared.jsx";
 
 function TelegramIcon() {
@@ -36,6 +36,7 @@ const COPY = {
 
 export default function Footer() {
   const { locale } = useLanguage();
+  const { theme } = useSiteTheme();
   const copy = COPY[locale];
   const [telegram, setTelegram] = useState("");
 

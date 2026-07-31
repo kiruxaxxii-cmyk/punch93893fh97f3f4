@@ -1,4 +1,3 @@
-import { theme } from "../lib/theme.js";
 import { Reveal, RouteIntro } from "../components/shared.jsx";
 import TicketsWorkspace from "../components/TicketsWorkspace.jsx";
 
@@ -18,7 +17,7 @@ function SupportDeskBadgeIcon() {
 
 export default function SupportDesk() {
   return (
-    <section className="route-page support-desk-page" style={theme.sectionColorVars}>
+    <section className="route-page support-desk-page">
       <div className="route-page__stack">
         <Reveal delay={0}>
           <RouteIntro

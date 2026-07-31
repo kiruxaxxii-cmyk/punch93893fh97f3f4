@@ -1,6 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { theme } from "./lib/theme.js";
 import { LanguageProvider } from "./lib/lang.jsx";
+import { SiteThemeProvider } from "./lib/siteTheme.jsx";
 import { NoticeProvider } from "./lib/notice.jsx";
 import { AuthProvider } from "./lib/auth.jsx";
 import AppShell from "./components/AppShell.jsx";
@@ -48,16 +48,16 @@ function SiteRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div style={theme.appColorVars}>
-        <LanguageProvider>
+      <LanguageProvider>
+        <SiteThemeProvider>
           <NoticeProvider>
             <Routes>
               <Route path="v3/client" element={<ClientShell />} />
               <Route path="*" element={<SiteRoutes />} />
             </Routes>
           </NoticeProvider>
-        </LanguageProvider>
-      </div>
+        </SiteThemeProvider>
+      </LanguageProvider>
     </BrowserRouter>
   );
 }

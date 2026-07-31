@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { theme, isAdmin, assignableRoles, canManage } from "../lib/theme.js";
+import { isAdmin, assignableRoles, canManage } from "../lib/theme.js";
 import { isSystemOwner } from "../lib/format.js";
 import {
   errorMessage,
@@ -487,7 +487,7 @@ export default function Admin() {
   }
 
   return (
-    <section className="route-page admin-page" style={theme.sectionColorVars}>
+    <section className="route-page admin-page">
       <div className="route-page__stack">
         <Reveal as="section" className="admin-page__hero" delay={0}>
           <RouteIntro align="left" badgeLabel={copy.badge} badgeIcon={<AdminBadgeIcon />} title={copy.title} description={copy.description} />

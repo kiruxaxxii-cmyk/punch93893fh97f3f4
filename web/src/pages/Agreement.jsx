@@ -1,4 +1,3 @@
-import { theme } from "../lib/theme.js";
 import { useLanguage } from "../lib/lang.jsx";
 import { Reveal, BlurPanel, RouteIntro } from "../components/shared.jsx";
 
@@ -205,7 +204,7 @@ export default function Agreement() {
   const { locale } = useLanguage();
   const copy = AGREEMENT_COPY[locale];
   return (
-    <section className="route-page agreement-page" style={theme.sectionColorVars}>
+    <section className="route-page agreement-page">
       <div className="route-page__stack">
         <Reveal delay={0}>
           <RouteIntro badgeLabel={copy.badge} badgeIcon={<AgreementBadgeIcon />} title={copy.title} description={copy.description} />
