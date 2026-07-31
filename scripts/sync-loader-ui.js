@@ -1,23 +1,24 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-const src = path.join(__dirname, '..', 'loader', 'ui');
+const root = path.join(__dirname, "..");
+const src = path.join(root, "loader", "ui");
 const targets = [
-  path.join(__dirname, '..', 'public', 'loader-app'),
-  path.join(__dirname, '..', 'public', 'downloads', 'ui'),
+  path.join(root, "public", "downloads", "ui"),
+  path.join(root, "public", "loader-app"),
 ];
 
 function copyDir(from, to) {
   fs.mkdirSync(to, { recursive: true });
-  for (const name of fs.readdirSync(from)) {
-    const a = path.join(from, name);
-    const b = path.join(to, name);
-    if (fs.statSync(a).isDirectory()) copyDir(a, b);
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const a = path.join(from, entry.name);
+    const b = path.join(to, entry.name);
+    if (entry.isDirectory()) copyDir(a, b);
     else fs.copyFileSync(a, b);
   }
 }
 
-for (const target of targets) {
-  copyDir(src, target);
-  console.log(`Synced loader UI → ${target}`);
+for (const t of targets) {
+  copyDir(src, t);
+  console.log("synced ->", path.relative(root, t));
 }

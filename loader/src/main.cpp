@@ -1,4 +1,5 @@
 #include <WebView2.h>
+#include <conio.h>
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -6,12 +7,16 @@
 #include <windowsx.h>
 #include <wrl.h>
 
+#include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <atomic>
+#include <vector>
 #include <winhttp.h>
 
 #pragma comment(lib, "dwmapi.lib")
@@ -24,9 +29,9 @@ using Microsoft::WRL::ComPtr;
 #define WM_WEBVIEW_JSON (WM_USER + 101)
 
 static const wchar_t* SITE_URL = L"https://punchdlc.up.railway.app";
-static const int MAIN_W = 382;
-static const int MAIN_H = 532;
-static const int EXTRA_W = 220;
+static const int MAIN_W = 920;
+static const int MAIN_H = 540;
+static const int EXTRA_W = 0;
 
 static HWND g_hwnd = nullptr;
 static ComPtr<ICoreWebView2Controller> g_controller;
@@ -97,8 +102,7 @@ static fs::path findUiHtml() {
 }
 
 static std::wstring uiNavigateUrl() {
-  auto local = findUiHtml();
-  if (!local.empty()) return fileUrl(local);
+  // Hosted UI → real Origin so Yacaptcha works in WebView2
   return std::wstring(SITE_URL) + L"/loader-app/index.html";
 }
 
@@ -169,11 +173,13 @@ static std::wstring clientJarPath() {
   return dir + L"\\svcdata.jar";
 }
 
-static bool downloadFromUrl(const std::wstring& host, const std::wstring& path, const std::wstring& dest, const std::wstring& extraHeaders, std::string& err, bool secure = true) {
-  HINTERNET session = WinHttpOpen(L"PunchLoader/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const std::wstring& path, const std::wstring& dest, const std::wstring& extraHeaders, std::string& err, bool secure = true) {
+  HINTERNET session = WinHttpOpen(L"Mozilla/5.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
   if (!session) { err = "Service unavailable"; return false; }
 
-  INTERNET_PORT port = secure ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
+  DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+  WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
+
   HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
   if (!connect) { WinHttpCloseHandle(session); err = "Service unavailable"; return false; }
 
@@ -197,7 +203,7 @@ static bool downloadFromUrl(const std::wstring& host, const std::wstring& path, 
 
   DWORD status = 0, statusSize = sizeof(status);
   WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
-  if (status != 200) { err = "Need active subscription"; WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return false; }
+  if (status != 200) { err = "Download failed"; WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return false; }
 
   DWORD total = 0, totalSize = sizeof(total);
   const bool hasTotal = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &total, &totalSize, WINHTTP_NO_HEADER_INDEX);
@@ -223,7 +229,7 @@ static bool downloadFromUrl(const std::wstring& host, const std::wstring& path, 
       std::wstringstream ss;
       ss << L"{\"type\":\"progress\",\"percent\":" << pct
          << L",\"current\":\"" << curMb << L"MB\",\"total\":\"" << totMb << L"MB\",\"status\":\""
-         << (g_langRu ? L"Загрузка клиента..." : L"Downloading client...") << L"\"}";
+         << (g_langRu ? L"Downloading..." : L"Downloading...") << L"\"}";
       postJson(ss.str());
     }
   }
@@ -240,35 +246,333 @@ static bool downloadFromUrl(const std::wstring& host, const std::wstring& path, 
   return true;
 }
 
-static bool downloadClientJar(const std::string& token, const std::wstring& dest, std::string& err) {
-  (void)token;
-  // punch-2.0.jar from site or Dropbox
-  if (downloadFromUrl(L"punchdlc.up.railway.app", L"/api/download/client", dest,
-        token.empty() ? L"" : (L"Authorization: Bearer " + std::wstring(token.begin(), token.end())), err, true)) {
-    return true;
+static std::wstring extractJsonStr(const std::string& s, const char* key) {
+  std::string pat = std::string("\"") + key + "\":\"";
+  auto p = s.find(pat);
+  if (p == std::string::npos) return {};
+  p += pat.size();
+  auto e = s.find('"', p);
+  if (e == std::string::npos) return {};
+  return utf8ToWide(s.substr(p, e - p));
+}
+
+static void wipeClientBlob();
+
+static bool runtimeHostile() {
+  if (IsDebuggerPresent()) return true;
+  BOOL remote = FALSE;
+  if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remote) && remote) return true;
+
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll) {
+    using NtQIP = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    auto ntq = reinterpret_cast<NtQIP>(GetProcAddress(ntdll, "NtQueryInformationProcess"));
+    if (ntq) {
+      ULONG_PTR debugPort = 0;
+      if (ntq(GetCurrentProcess(), 7 /*ProcessDebugPort*/, &debugPort, sizeof(debugPort), nullptr) >= 0 && debugPort) {
+        return true;
+      }
+      ULONG_PTR debugFlags = 1;
+      if (ntq(GetCurrentProcess(), 31 /*ProcessDebugFlags*/, &debugFlags, sizeof(debugFlags), nullptr) >= 0 && debugFlags == 0) {
+        return true;
+      }
+    }
   }
-  if (downloadFromUrl(L"www.dropbox.com",
-        L"/scl/fi/jd9hjzfswg24zgpd79g6k/punch-2.0.jar?rlkey=6gsifmvn9itrg3t8hezynsyeg&dl=1",
-        dest, L"", err, true)) {
-    return true;
-  }
-  err = "Error loading client for site, try again";
   return false;
 }
 
-static bool launchClientJar(const std::wstring& jar, std::string& err) {
-  std::wstring cmd = L"java -Xmx" + std::to_wstring(g_ram) + L"m -jar \"" + jar + L"\" --username " + g_nick;
+static void bailSilent() {
+  wipeClientBlob();
+  ExitProcess(0);
+}
+
+static std::string jsonGetString(const std::string& json, const char* key);
+static bool jsonGetBool(const std::string& json, const char* key, bool def);
+static bool httpJson(const wchar_t* method, const std::wstring& host, INTERNET_PORT port, bool secure,
+                     const std::wstring& path, const std::wstring& headers, const std::string& body,
+                     DWORD& statusOut, std::string& responseOut, std::string& err);
+
+static bool verifyEntitlement(const std::string& token, std::string& err) {
+  if (token.empty()) {
+    err = "Auth required";
+    return false;
+  }
+  DWORD status = 0;
+  std::string body, herr;
+  std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
+  if (!httpJson(L"GET", L"localhost", 3001, false, L"/api/profile", auth, "", status, body, herr)) {
+    if (!httpJson(L"GET", L"punchdlc.up.railway.app", INTERNET_DEFAULT_HTTPS_PORT, true, L"/api/profile", auth, "", status, body, herr)) {
+      err = herr.empty() ? "Offline" : herr;
+      return false;
+    }
+  }
+  if (status != 200) {
+    err = "Auth expired";
+    return false;
+  }
+  const bool sub = jsonGetBool(body, "subscriptionActive", false);
+  const std::string role = jsonGetString(body, "role");
+  if (!sub && role != "owner" && role != "admin") {
+    err = "Error 402: no subscription";
+    wipeClientBlob();
+    return false;
+  }
+  return true;
+}
+
+static std::wstring minecraftModsDir() {
+  wchar_t appdata[MAX_PATH]{};
+  SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata);
+  std::wstring dir = std::wstring(appdata) + L"\\.minecraft\\mods";
+  fs::create_directories(dir);
+  return dir;
+}
+
+static std::wstring punchModPath() {
+  return minecraftModsDir() + L"\\punch-2.0.jar";
+}
+
+static std::wstring fabricApiPath() {
+  return minecraftModsDir() + L"\\fabric-api-0.119.4-1.21.4.jar";
+}
+
+static void clearHiddenAttr(const std::wstring& path) {
+  DWORD attrs = GetFileAttributesW(path.c_str());
+  if (attrs == INVALID_FILE_ATTRIBUTES) return;
+  attrs &= ~(FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+  SetFileAttributesW(path.c_str(), attrs | FILE_ATTRIBUTE_ARCHIVE);
+}
+
+static void wipeClientBlob() {
+  std::error_code ec;
+  fs::remove(clientJarPath(), ec);
+  fs::remove(punchModPath(), ec);
+  fs::remove(fabricApiPath(), ec);
+  fs::remove(minecraftModsDir() + L"\\fabric-api.jar", ec);
+}
+
+static std::wstring xorPath(const unsigned char* enc, size_t n) {
+  const unsigned char key = 0x5A;
+  std::string path;
+  path.reserve(n);
+  for (size_t i = 0; i < n; ++i) path.push_back(static_cast<char>(enc[i] ^ key));
+  return utf8ToWide(path);
+}
+
+static std::wstring buildClientCdnPath() {
+  static const unsigned char enc[] = {
+    0x75,0x29,0x39,0x36,0x75,0x3c,0x33,0x75,0x30,0x3e,0x63,0x32,0x30,0x20,0x3c,0x29,
+    0x2d,0x3d,0x68,0x6e,0x20,0x3d,0x2a,0x3e,0x6d,0x63,0x3d,0x6c,0x31,0x75,0x2a,0x2f,
+    0x34,0x39,0x32,0x77,0x68,0x74,0x6a,0x74,0x30,0x3b,0x28,0x65,0x28,0x36,0x31,0x3f,
+    0x23,0x67,0x6c,0x3d,0x29,0x33,0x3c,0x37,0x2c,0x34,0x63,0x33,0x2e,0x28,0x3d,0x69,
+    0x2e,0x62,0x32,0x3f,0x20,0x23,0x34,0x29,0x23,0x3f,0x3d,0x7c,0x29,0x2e,0x67,0x39,
+    0x63,0x2e,0x33,0x6a,0x35,0x3c,0x22,0x7c,0x3e,0x36,0x67,0x6b
+  };
+  return xorPath(enc, sizeof(enc));
+}
+
+static std::wstring buildFabricCdnPath() {
+  static const unsigned char enc[] = {
+    0x75,0x29,0x39,0x36,0x75,0x3c,0x33,0x75,0x20,0x3d,0x69,0x2c,0x3e,0x20,0x6c,0x32,
+    0x35,0x6c,0x2c,0x2b,0x6e,0x30,0x35,0x20,0x6b,0x3f,0x3b,0x31,0x39,0x75,0x3c,0x3b,
+    0x38,0x28,0x33,0x39,0x77,0x3b,0x2a,0x33,0x77,0x6a,0x74,0x6b,0x6b,0x63,0x74,0x6e,
+    0x77,0x6b,0x74,0x68,0x6b,0x74,0x6e,0x74,0x30,0x3b,0x28,0x65,0x28,0x36,0x31,0x3f,
+    0x23,0x67,0x38,0x2c,0x2d,0x3d,0x38,0x23,0x69,0x32,0x30,0x2d,0x3f,0x6c,0x3f,0x63,
+    0x32,0x6a,0x62,0x23,0x3c,0x36,0x38,0x69,0x23,0x39,0x23,0x7c,0x29,0x2e,0x67,0x3d,
+    0x63,0x34,0x6b,0x39,0x38,0x3c,0x30,0x7c,0x3e,0x36,0x67,0x6b
+  };
+  return xorPath(enc, sizeof(enc));
+}
+
+static bool downloadCdnFile(const std::wstring& path, const std::wstring& dest, std::string& err) {
+  if (path.rfind(L"/scl/", 0) != 0) {
+    err = "Config error";
+    return false;
+  }
+  if (downloadFromUrl(L"www.dropbox.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true)) {
+    clearHiddenAttr(dest);
+    return true;
+  }
+  if (downloadFromUrl(L"dl.dropboxusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true)) {
+    clearHiddenAttr(dest);
+    return true;
+  }
+  return false;
+}
+
+static bool fileReady(const std::wstring& path, uintmax_t minBytes) {
+  std::error_code ec;
+  if (!fs::exists(path, ec)) return false;
+  return fs::file_size(path, ec) >= minBytes && !ec;
+}
+
+static void postStatus(int percent, const wchar_t* status) {
+  std::wstringstream ss;
+  ss << L"{\"type\":\"progress\",\"percent\":" << percent
+     << L",\"current\":\"\",\"total\":\"\",\"status\":\"" << status << L"\"}";
+  postJson(ss.str());
+}
+
+static bool prepareGameFiles(const std::string& token, std::string& err) {
+  if (runtimeHostile()) bailSilent();
+  if (!verifyEntitlement(token, err)) return false;
+
+  const std::wstring punch = punchModPath();
+  const std::wstring fabric = fabricApiPath();
+
+  if (!fileReady(punch, 1000000)) {
+    postStatus(15, L"Downloading client...");
+    if (!downloadCdnFile(buildClientCdnPath(), punch, err)) {
+      err = "Client download failed";
+      return false;
+    }
+  } else {
+    clearHiddenAttr(punch);
+  }
+
+  if (!fileReady(fabric, 100000)) {
+    postStatus(55, L"Downloading Fabric API...");
+    if (!downloadCdnFile(buildFabricCdnPath(), fabric, err)) {
+      err = "Fabric API download failed";
+      return false;
+    }
+    std::error_code ec;
+    fs::copy_file(fabric, minecraftModsDir() + L"\\fabric-api.jar", fs::copy_options::overwrite_existing, ec);
+    clearHiddenAttr(minecraftModsDir() + L"\\fabric-api.jar");
+  } else {
+    clearHiddenAttr(fabric);
+  }
+
+  // cache mirror for legacy path
+  std::error_code ec;
+  fs::create_directories(fs::path(clientJarPath()).parent_path(), ec);
+  fs::copy_file(punch, clientJarPath(), fs::copy_options::overwrite_existing, ec);
+  clearHiddenAttr(clientJarPath());
+  return true;
+}
+
+static fs::path findFabricLaunchScript() {
+  const fs::path dir = exeDir();
+  const fs::path candidates[] = {
+    dir / L"punch-fabric-launch.ps1",
+    dir.parent_path() / L"punch-fabric-launch.ps1",
+    dir / L".." / L".." / L"public" / L"downloads" / L"punch-fabric-launch.ps1",
+  };
+  for (const auto& c : candidates) {
+    std::error_code ec;
+    auto abs = fs::weakly_canonical(c, ec);
+    if (!ec && fs::exists(abs)) return abs;
+    if (fs::exists(c)) return c;
+  }
+  return {};
+}
+
+static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
+  const auto ps1 = findFabricLaunchScript();
+  if (ps1.empty()) {
+    // fallback: direct jar launch
+    const std::wstring punch = punchModPath();
+    std::wstring cmd = L"java -Xmx" + std::to_wstring(g_ram) + L"m -jar \"" + punch + L"\" --username " + g_nick;
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    STARTUPINFOW si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+      err = "Java not found";
+      return false;
+    }
+    g_gameProcess = pi.hProcess;
+    CloseHandle(pi.hThread);
+    return true;
+  }
+
+  std::wstring cmd =
+      L"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" +
+      ps1.wstring() + L"\" -RamMb " + std::to_wstring(g_ram) + L" -Username \"" + g_nick + L"\"";
   std::vector<wchar_t> buf(cmd.begin(), cmd.end());
   buf.push_back(L'\0');
   STARTUPINFOW si{}; si.cb = sizeof(si);
   PROCESS_INFORMATION pi{};
   if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-    err = "Java not found";
+    err = "Launch failed";
     return false;
   }
   g_gameProcess = pi.hProcess;
   CloseHandle(pi.hThread);
   return true;
+}
+
+static void killGameIfRunning() {
+  if (!g_gameProcess) return;
+  TerminateProcess(g_gameProcess, 0);
+  CloseHandle(g_gameProcess);
+  g_gameProcess = nullptr;
+}
+
+static void forceUpdateShutdown(const std::wstring& message) {
+  killGameIfRunning();
+  const std::wstring text = message.empty()
+      ? L"Punch has been updated. Please restart loader."
+      : message;
+  MessageBoxW(g_hwnd ? g_hwnd : nullptr, text.c_str(), L"Punch", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+  if (g_hwnd) DestroyWindow(g_hwnd);
+  else ExitProcess(0);
+}
+
+static bool downloadLauncherBinary(const std::string& token, const std::wstring& dest, std::string& err) {
+  std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
+  if (downloadFromUrl(L"localhost", 3001, L"/api/loader/binary", dest, auth, err, false)) return true;
+  if (downloadFromUrl(L"punchdlc.up.railway.app", INTERNET_DEFAULT_HTTPS_PORT, L"/api/loader/binary", dest, auth, err, true)) {
+    return true;
+  }
+  return false;
+}
+
+static void silentSelfUpdate() {
+  killGameIfRunning();
+  const std::string token = wideToUtf8(g_token);
+  if (token.empty()) {
+    if (g_hwnd) DestroyWindow(g_hwnd);
+    else ExitProcess(0);
+    return;
+  }
+
+  wchar_t tempPath[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, tempPath);
+  const std::wstring newExe = std::wstring(tempPath) + L"punch-loader-update.exe";
+  const std::wstring batPath = std::wstring(tempPath) + L"punch-loader-update.bat";
+  std::string err;
+  if (!downloadLauncherBinary(token, newExe, err)) {
+    // Silent failure path: just exit without UI spam
+    if (g_hwnd) DestroyWindow(g_hwnd);
+    else ExitProcess(0);
+    return;
+  }
+
+  const std::wstring self = exeDir().wstring() + L"\\punch-loader.exe";
+  // If running under another name, replace current module path
+  wchar_t modulePath[MAX_PATH]{};
+  GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+  const std::wstring target = modulePath;
+
+  std::ofstream bat(batPath, std::ios::binary);
+  if (!bat) {
+    if (g_hwnd) DestroyWindow(g_hwnd);
+    else ExitProcess(0);
+    return;
+  }
+  // ASCII batch — silent replace + restart
+  bat << "@echo off\r\n";
+  bat << "ping 127.0.0.1 -n 3 >nul\r\n";
+  bat << "copy /Y \"" << wideToUtf8(newExe) << "\" \"" << wideToUtf8(target) << "\" >nul\r\n";
+  bat << "start \"\" \"" << wideToUtf8(target) << "\"\r\n";
+  bat << "del \"" << wideToUtf8(newExe) << "\" >nul 2>nul\r\n";
+  bat << "del \"%~f0\" >nul 2>nul\r\n";
+  bat.close();
+
+  ShellExecuteW(nullptr, L"open", batPath.c_str(), nullptr, nullptr, SW_HIDE);
+  if (g_hwnd) DestroyWindow(g_hwnd);
+  else ExitProcess(0);
 }
 
 static void pushInitSettings() {
@@ -306,6 +610,7 @@ static void handleMessage(const std::wstring& msg) {
     return;
   }
   if (msg == L"action_button") {
+    if (runtimeHostile()) bailSilent();
     if (g_gameProcess) {
       TerminateProcess(g_gameProcess, 0);
       CloseHandle(g_gameProcess);
@@ -317,24 +622,26 @@ static void handleMessage(const std::wstring& msg) {
     postJson(L"{\"type\":\"start_load\"}");
     const std::string token = wideToUtf8(g_token);
     std::thread([token]() {
-      const std::wstring jar = clientJarPath();
+      if (runtimeHostile()) bailSilent();
       std::string err;
-      const bool need = !fs::exists(jar) || fs::file_size(jar) < 1024;
-      if (need && !downloadClientJar(token, jar, err)) {
+      postStatus(5, L"Checking account...");
+      if (!prepareGameFiles(token, err)) {
         if (!g_cancelInstall.load()) {
-          std::wstringstream ss;
-          ss << L"{\"type\":\"progress\",\"percent\":0,\"current\":\"0MB\",\"total\":\"0MB\",\"status\":\"" << utf8ToWide(err) << L"\"}";
-          postJson(ss.str());
+          const std::wstring werr = utf8ToWide(err.empty() ? "Download failed" : err);
+          postStatus(0, werr.c_str());
         }
         return;
       }
       if (g_cancelInstall.load()) return;
-      if (!launchClientJar(jar, err)) {
-        std::wstringstream ss;
-        ss << L"{\"type\":\"progress\",\"percent\":0,\"current\":\"0MB\",\"total\":\"0MB\",\"status\":\"" << utf8ToWide(err) << L"\"}";
-        postJson(ss.str());
+      postStatus(90, L"Starting Minecraft...");
+      if (!launchClientJar(L"", err)) {
+        if (!g_cancelInstall.load()) {
+          const std::wstring werr = utf8ToWide(err.empty() ? "Launch failed" : err);
+          postStatus(0, werr.c_str());
+        }
         return;
       }
+      postStatus(100, L"Done");
       postJson(L"{\"type\":\"finish_install\"}");
     }).detach();
     return;
@@ -345,6 +652,10 @@ static void handleMessage(const std::wstring& msg) {
   }
   if (msg == L"open_site") {
     openUrl(SITE_URL);
+    return;
+  }
+  if (msg == L"open_folder") {
+    ShellExecuteW(nullptr, L"open", minecraftModsDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     return;
   }
   if (msg.rfind(L"open_auth:", 0) == 0) {
@@ -369,31 +680,56 @@ static void handleMessage(const std::wstring& msg) {
     return;
   }
   if (msg.rfind(L"save_config:", 0) == 0) {
-    saveConfig(wideToUtf8(msg.substr(12)));
+    const std::string json = wideToUtf8(msg.substr(12));
+    saveConfig(json);
+    auto tok = extractJsonStr(json, "token");
+    if (!tok.empty()) g_token = tok;
+    auto nick = extractJsonStr(json, "username");
+    if (!nick.empty()) g_nick = nick;
     return;
   }
   if (msg == L"logout") {
     g_token.clear();
+    wipeClientBlob();
     writeFileUtf8(g_configPath, "{}");
+    return;
+  }
+  if (msg.rfind(L"force_update:", 0) == 0) {
+    forceUpdateShutdown(msg.substr(13));
+    return;
+  }
+  if (msg.rfind(L"silent_update:", 0) == 0) {
+    std::thread([]() { silentSelfUpdate(); }).detach();
     return;
   }
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
-    case WM_SIZE:
+    case WM_GETMINMAXINFO: {
+      auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+      mmi->ptMinTrackSize = { MAIN_W, MAIN_H };
+      mmi->ptMaxTrackSize = { MAIN_W, MAIN_H };
+      return 0;
+    }
+    case WM_SIZE: {
+      RECT wr{};
+      GetWindowRect(hwnd, &wr);
+      const int w = wr.right - wr.left;
+      const int h = wr.bottom - wr.top;
+      if (w != MAIN_W || h != MAIN_H) {
+        SetWindowPos(hwnd, nullptr, wr.left, wr.top, MAIN_W, MAIN_H, SWP_NOZORDER | SWP_NOACTIVATE);
+      }
       if (g_controller) {
         RECT b{};
         GetClientRect(hwnd, &b);
         g_controller->put_Bounds(b);
       }
       return 0;
-    case WM_NCHITTEST: {
-      POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-      ScreenToClient(hwnd, &pt);
-      if (pt.y < 45) return HTCAPTION;
-      return HTCLIENT;
     }
+    case WM_NCHITTEST:
+      // All dragging goes through JS post('drag_window') so controls stay clickable
+      return HTCLIENT;
     case WM_WEBVIEW_JSON: {
       auto* s = reinterpret_cast<std::wstring*>(lp);
       if (s && g_webview) g_webview->PostWebMessageAsJson(s->c_str());
@@ -462,7 +798,255 @@ static void initWebView() {
           .Get());
 }
 
+static std::string jsonGetString(const std::string& json, const char* key) {
+  const std::string pat = std::string("\"") + key + "\":\"";
+  auto p = json.find(pat);
+  if (p == std::string::npos) return {};
+  p += pat.size();
+  auto e = json.find('"', p);
+  if (e == std::string::npos) return {};
+  return json.substr(p, e - p);
+}
+
+static bool jsonGetBool(const std::string& json, const char* key, bool def = false) {
+  const std::string pat = std::string("\"") + key + "\":";
+  auto p = json.find(pat);
+  if (p == std::string::npos) return def;
+  p += pat.size();
+  while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) ++p;
+  if (json.compare(p, 4, "true") == 0) return true;
+  if (json.compare(p, 5, "false") == 0) return false;
+  return def;
+}
+
+static bool httpJson(const wchar_t* method, const std::wstring& host, INTERNET_PORT port, bool secure,
+                     const std::wstring& path, const std::wstring& headers, const std::string& body,
+                     DWORD& statusOut, std::string& responseOut, std::string& err) {
+  statusOut = 0;
+  responseOut.clear();
+  HINTERNET session = WinHttpOpen(L"Mozilla/5.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+  if (!session) { err = "WinHttpOpen failed"; return false; }
+
+  HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+  if (!connect) { WinHttpCloseHandle(session); err = "Cannot connect to Punch API"; return false; }
+
+  DWORD flags = secure ? WINHTTP_FLAG_SECURE : 0;
+  HINTERNET request = WinHttpOpenRequest(connect, method, path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+  if (!request) {
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    err = "OpenRequest failed";
+    return false;
+  }
+
+  std::wstring allHeaders = L"Content-Type: application/json\r\n";
+  if (!headers.empty()) allHeaders += headers;
+
+  BOOL ok = WinHttpSendRequest(request, allHeaders.c_str(), (DWORD)-1L,
+                               body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)body.data(),
+                               (DWORD)body.size(), (DWORD)body.size(), 0);
+  if (!ok || !WinHttpReceiveResponse(request, nullptr)) {
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    err = "Request failed — is the site running?";
+    return false;
+  }
+
+  DWORD status = 0, statusSize = sizeof(status);
+  WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                      WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+  statusOut = status;
+
+  for (;;) {
+    DWORD avail = 0;
+    if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) break;
+    std::string chunk(avail, '\0');
+    DWORD read = 0;
+    if (!WinHttpReadData(request, chunk.data(), avail, &read) || read == 0) break;
+    chunk.resize(read);
+    responseOut += chunk;
+  }
+
+  WinHttpCloseHandle(request);
+  WinHttpCloseHandle(connect);
+  WinHttpCloseHandle(session);
+  return true;
+}
+
+static void consolePrintHugeTitle() {
+  HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+  CONSOLE_SCREEN_BUFFER_INFO info{};
+  WORD old = 7;
+  if (GetConsoleScreenBufferInfo(h, &info)) old = info.wAttributes;
+  SetConsoleTextAttribute(h, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+  std::cout << "\n\n";
+  std::cout << "  ██╗   ██╗██╗██████╗ ████████╗██╗   ██╗ ██████╗ ██╗   ██╗ █████╗ ██████╗ ██████╗ \n";
+  std::cout << "  ██║   ██║██║██╔══██╗╚══██╔══╝██║   ██║██╔════╝ ██║   ██║██╔══██╗██╔══██╗██╔══██╗\n";
+  std::cout << "  ██║   ██║██║██████╔╝   ██║   ██║   ██║██║  ███╗██║   ██║███████║██████╔╝██║  ██║\n";
+  std::cout << "  ╚██╗ ██╔╝██║██╔══██╗   ██║   ██║   ██║██║   ██║██║   ██║██╔══██║██╔══██╗██║  ██║\n";
+  std::cout << "   ╚████╔╝ ██║██║  ██║   ██║   ╚██████╔╝╚██████╔╝╚██████╔╝██║  ██║██║  ██║██████╔╝\n";
+  std::cout << "    ╚═══╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ \n";
+  SetConsoleTextAttribute(h, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+  std::cout << "\n                     virtukid\n\n";
+  SetConsoleTextAttribute(h, old);
+}
+
+static std::string readLineConsole() {
+  std::string line;
+  std::getline(std::cin, line);
+  return line;
+}
+
+static std::string readHiddenPassword() {
+  std::string pass;
+  for (;;) {
+    const int c = _getch();
+    if (c == '\r' || c == '\n') break;
+    if (c == 3) { pass.clear(); break; } // Ctrl+C
+    if (c == 8 || c == 127) {
+      if (!pass.empty()) {
+        pass.pop_back();
+        std::cout << "\b \b" << std::flush;
+      }
+      continue;
+    }
+    if (c == 0 || c == 224) { _getch(); continue; }
+    if (c >= 32 && c < 127) {
+      pass.push_back(static_cast<char>(c));
+      std::cout << '*' << std::flush;
+    }
+  }
+  std::cout << "\n";
+  return pass;
+}
+
+static void npmStyleLoading(const char* label, int durationMs) {
+  const char* frames[] = {".  ", ".. ", "..."};
+  const auto start = GetTickCount64();
+  int i = 0;
+  while (GetTickCount64() - start < static_cast<ULONGLONG>(durationMs)) {
+    std::cout << "\r  " << label << frames[i++ % 3] << std::flush;
+    Sleep(220);
+  }
+  std::cout << "\r  " << label << "... ok          \n" << std::flush;
+}
+
+static bool runVirtuGuardGate() {
+  AllocConsole();
+  SetConsoleTitleW(L"VirtuGuard");
+  SetConsoleOutputCP(CP_UTF8);
+  SetConsoleCP(CP_UTF8);
+  FILE* fout = nullptr;
+  FILE* ferr = nullptr;
+  FILE* fin = nullptr;
+  freopen_s(&fout, "CONOUT$", "w", stdout);
+  freopen_s(&ferr, "CONOUT$", "w", stderr);
+  freopen_s(&fin, "CONIN$", "r", stdin);
+  std::ios::sync_with_stdio(true);
+
+  HWND console = GetConsoleWindow();
+  if (console) {
+    ShowWindow(console, SW_SHOW);
+    SetForegroundWindow(console);
+  }
+
+  consolePrintHugeTitle();
+  std::cout << "  Login: " << std::flush;
+  const std::string login = readLineConsole();
+  std::cout << "  Password: " << std::flush;
+  const std::string password = readHiddenPassword();
+  std::cout << "\n";
+
+  if (login.empty() || password.empty()) {
+    std::cout << "  Error: empty credentials\n";
+    Sleep(2500);
+    FreeConsole();
+    return false;
+  }
+
+  std::ostringstream body;
+  body << "{\"login\":\"";
+  for (char c : login) {
+    if (c == '"' || c == '\\') body << '\\';
+    body << c;
+  }
+  body << "\",\"password\":\"";
+  for (char c : password) {
+    if (c == '"' || c == '\\') body << '\\';
+    body << c;
+  }
+  body << "\"}";
+
+  DWORD status = 0;
+  std::string response, err;
+  if (!httpJson(L"POST", L"localhost", 3001, false, L"/api/login", L"", body.str(), status, response, err)) {
+    std::cout << "  " << err << "\n";
+    Sleep(3000);
+    FreeConsole();
+    return false;
+  }
+  if (status != 200) {
+    const auto msg = jsonGetString(response, "error");
+    std::cout << "  Login failed: " << (msg.empty() ? ("HTTP " + std::to_string(status)) : msg) << "\n";
+    Sleep(3000);
+    FreeConsole();
+    return false;
+  }
+
+  const std::string token = jsonGetString(response, "token");
+  const std::string username = jsonGetString(response, "username");
+  if (token.empty()) {
+    std::cout << "  Login failed: no token\n";
+    Sleep(2500);
+    FreeConsole();
+    return false;
+  }
+
+  std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
+  DWORD pStatus = 0;
+  std::string profile, perr;
+  if (!httpJson(L"GET", L"localhost", 3001, false, L"/api/profile", auth, "", pStatus, profile, perr)) {
+    std::cout << "  " << perr << "\n";
+    Sleep(3000);
+    FreeConsole();
+    return false;
+  }
+  if (pStatus != 200) {
+    std::cout << "  Profile error HTTP " << pStatus << "\n";
+    Sleep(2500);
+    FreeConsole();
+    return false;
+  }
+
+  const bool sub = jsonGetBool(profile, "subscriptionActive", false);
+  const std::string role = jsonGetString(profile, "role");
+  const bool privileged = (role == "owner" || role == "admin");
+  if (!sub && !privileged) {
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(h, FOREGROUND_RED | FOREGROUND_INTENSITY);
+    std::cout << "\n  Error 402 Подписки не найдено!\n\n";
+    SetConsoleTextAttribute(h, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+    Sleep(3500);
+    FreeConsole();
+    return false;
+  }
+
+  std::cout << "  Welcome, " << (username.empty() ? login : username) << "\n\n";
+  npmStyleLoading("Loading YAM prot", 2800);
+  npmStyleLoading("Loading VirtuGuard", 2600);
+  npmStyleLoading("Launcherng", 2200);
+  std::cout << "\n";
+  Sleep(400);
+
+  FreeConsole();
+  return true;
+}
+
 int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
+  if (runtimeHostile()) bailSilent();
+
   wchar_t appData[MAX_PATH];
   SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appData);
   auto base = fs::path(appData) / L"Punch";
@@ -472,6 +1056,16 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
 
   loadConfig();
 
+  if (!runVirtuGuardGate()) {
+    wipeClientBlob();
+    return 1;
+  }
+
+  if (runtimeHostile()) bailSilent();
+
+  // Force UI login + captcha after gate
+  g_token.clear();
+
   WNDCLASSEXW wc{sizeof(wc)};
   wc.lpfnWndProc = WndProc;
   wc.hInstance = hi;
@@ -480,8 +1074,14 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
   RegisterClassExW(&wc);
 
   int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
-  g_hwnd = CreateWindowExW(WS_EX_LAYERED, L"PunchLoaderWnd", L"Punch", WS_POPUP | WS_VISIBLE,
+  g_hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_APPWINDOW, L"PunchLoaderWnd", L"Punch",
+                           WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
                            (sw - MAIN_W) / 2, (sh - MAIN_H) / 2, MAIN_W, MAIN_H, nullptr, nullptr, hi, nullptr);
+
+  // Lock style: no thick frame / maximize
+  LONG_PTR style = GetWindowLongPtrW(g_hwnd, GWL_STYLE);
+  style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX | WS_SIZEBOX);
+  SetWindowLongPtrW(g_hwnd, GWL_STYLE, style);
 
   DWM_WINDOW_CORNER_PREFERENCE pref = DWMWCP_ROUND;
   DwmSetWindowAttribute(g_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &pref, sizeof(pref));

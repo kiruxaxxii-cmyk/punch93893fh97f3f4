@@ -32,4 +32,6 @@ target_link_libraries(punch-loader PRIVATE
 add_custom_command(TARGET punch-loader POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/ui $<TARGET_FILE_DIR:punch-loader>/ui
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/punch-fabric-launch.ps1 $<TARGET_FILE_DIR:punch-loader>/punch-fabric-launch.ps1
 )

@@ -6,11 +6,13 @@ data/*
 .env
 .next/
 loader/build/
-loader/deps/
 tmp-expensive.html
 tmp-*.js
 tmp-*.html
 public/downloads/imgui.ini
 public/downloads/*.dll
+public/downloads/punch-loader.zip
 UIEngine/
 public/downloads/punch-1.2*.jar
+
+loader/deps/

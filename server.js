@@ -5,7 +5,8 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
-const { db, generateKey, DB_PATH, normalizeEmail, normalizeUsername, isValidEmail, findRegistrationConflict, getEbdInfo, dedupeEbd } = require('./db');
+const crypto = require('crypto');
+const { db, generateKey, DB_PATH, normalizeEmail, normalizeUsername, isValidEmail, findRegistrationConflict, getEbdInfo, dedupeEbd, ensureAdminAccount } = require('./db');
 const cryptobot = require('./lib/cryptobot');
 
 const app = express();
@@ -16,10 +17,14 @@ const LOADER_DIR = path.join(__dirname, 'public', 'downloads');
 const LOADER_PATH = path.join(LOADER_DIR, 'punch-loader.exe');
 const LOADER_ZIP = path.join(LOADER_DIR, 'punch-loader.zip');
 const CLIENT_JAR_PATH = process.env.CLIENT_JAR_PATH || path.join(LOADER_DIR, 'punch-client.jar');
-const CLIENT_JAR_URL = process.env.CLIENT_JAR_URL || '';
+const CLIENT_JAR_URL =
+  process.env.CLIENT_JAR_URL ||
+  'https://www.dropbox.com/scl/fi/jd9hjzfswg24zgpd79g6k/punch-2.0.jar?rlkey=6gsifmvn9itrg3t8hezynsyeg&st=c9ti0ofx&dl=1';
 const FABRIC_API_PATH =
   process.env.FABRIC_API_PATH || path.join(LOADER_DIR, 'fabric-api-0.119.4-1.21.4.jar');
-const FABRIC_API_URL = process.env.FABRIC_API_URL || '';
+const FABRIC_API_URL =
+  process.env.FABRIC_API_URL ||
+  'https://www.dropbox.com/scl/fi/zg3vdz6ho6vq4joz1eakc/fabric-api-0.119.4-1.21.4.jar?rlkey=bvwgby3hjwe6e9h08yflb3ycy&st=g9n1cbfj&dl=1';
 
 const SHOP_PLANS = {
   '7 дней': { plan: 'trial', days: 7, price: 49 },
@@ -31,6 +36,86 @@ const SHOP_PLANS = {
 
 const loaderSessions = new Map();
 const VALID_ROLES = ['user', 'media', 'moderator', 'admin', 'owner'];
+
+// Yacaptcha — Turnstile-like captcha bound to Punch hosts only
+const YACAPTCHA_ALLOWED_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '[::1]',
+  'punchdlc.up.railway.app',
+  'punchdlc.fun',
+  'www.punchdlc.fun',
+]);
+const yacaptchaChallenges = new Map();
+const yacaptchaTokens = new Map();
+const YACAPTCHA_TTL_MS = 5 * 60 * 1000;
+
+function purgeYacaptcha() {
+  const now = Date.now();
+  for (const [id, row] of yacaptchaChallenges) {
+    if (row.expires < now) yacaptchaChallenges.delete(id);
+  }
+  for (const [tok, row] of yacaptchaTokens) {
+    if (row.expires < now || row.consumed) yacaptchaTokens.delete(tok);
+  }
+}
+
+function isYacaptchaHostAllowed(hostname) {
+  const host = String(hostname || '')
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+  if (!host) return false;
+  if (YACAPTCHA_ALLOWED_HOSTS.has(host)) return true;
+  if (host.endsWith('.up.railway.app')) return true;
+  if (host === 'punchdlc.fun' || host.endsWith('.punchdlc.fun')) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  return false;
+}
+
+function requestHost(req) {
+  const origin = String(req.headers.origin || '').trim();
+  if (origin) {
+    try {
+      return new URL(origin).hostname.toLowerCase();
+    } catch {
+      /* ignore */
+    }
+  }
+  const bodyHost = String(req.body?.host || '').trim().toLowerCase().replace(/:\d+$/, '');
+  if (bodyHost) return bodyHost;
+  const xfHost = String(req.headers['x-forwarded-host'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+  if (xfHost) return xfHost;
+  const hostHeader = String(req.headers.host || '')
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+  return hostHeader;
+}
+
+function assertYacaptchaHost(req, res) {
+  const host = requestHost(req);
+  if (!isYacaptchaHostAllowed(host)) {
+    res.status(403).json({ error: 'Eyeglass error', code: 'eyeglass' });
+    return null;
+  }
+  return host;
+}
+
+function consumeYacaptchaToken(token, host) {
+  purgeYacaptcha();
+  const row = yacaptchaTokens.get(String(token || ''));
+  if (!row || row.expires < Date.now() || row.consumed) return false;
+  if (row.host !== host) return false;
+  row.consumed = true;
+  yacaptchaTokens.delete(String(token));
+  return true;
+}
 
 function purgeLoaderSessions() {
   const now = Date.now();
@@ -74,12 +159,36 @@ app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   next();
 });
+
+// Legacy HTML entrypoints → SPA (must be before express.static)
+app.get(['/login.html', '/login'], (req, res) => {
+  const q = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  res.redirect(302, '/sign-in' + q);
+});
+app.get(['/register.html', '/register'], (req, res) => {
+  const q = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  res.redirect(302, '/sign-up' + q);
+});
+app.get(['/cabinet.html', '/cabinet'], (_req, res) => {
+  res.redirect(302, '/profile');
+});
+app.get(['/admin.html'], (_req, res) => {
+  res.redirect(302, '/admin');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PLAN_DAYS = { trial: 7, month: 30, quarter: 90, lifetime: 36500 };
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 60 });
+const yacaptchaLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Eyeglass error', code: 'eyeglass' },
+});
 
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
@@ -251,22 +360,118 @@ function fulfillPayment(payment) {
   logAction(user.id, user.hwid, null, `payment_paid:${payment.plan_label}:${payment.id}`);
 }
 
+// ── Yacaptcha ──
+
+app.post('/api/yacaptcha/challenge', yacaptchaLimiter, (req, res) => {
+  const host = assertYacaptchaHost(req, res);
+  if (!host) return;
+  purgeYacaptcha();
+  const challengeId = crypto.randomBytes(24).toString('hex');
+  yacaptchaChallenges.set(challengeId, {
+    host,
+    expires: Date.now() + YACAPTCHA_TTL_MS,
+    solved: false,
+  });
+  res.json({ challengeId, brand: 'Yacaptcha', ttlMs: YACAPTCHA_TTL_MS });
+});
+
+app.post('/api/yacaptcha/solve', yacaptchaLimiter, (req, res) => {
+  const host = assertYacaptchaHost(req, res);
+  if (!host) return;
+  purgeYacaptcha();
+  const challengeId = String(req.body?.challengeId || '');
+  const row = yacaptchaChallenges.get(challengeId);
+  if (!row || row.expires < Date.now() || row.solved || row.host !== host) {
+    return res.status(403).json({ error: 'Eyeglass error', code: 'eyeglass' });
+  }
+  row.solved = true;
+  yacaptchaChallenges.delete(challengeId);
+  const token = `ya_${crypto.randomBytes(32).toString('hex')}`;
+  yacaptchaTokens.set(token, {
+    host,
+    expires: Date.now() + YACAPTCHA_TTL_MS,
+    consumed: false,
+  });
+  res.json({ token, brand: 'Yacaptcha' });
+});
+
 // ── Auth ──
 
-app.post('/api/register', authLimiter, (_req, res) => {
-  return res.status(403).json({
-    error: 'Регистрация отключена. Войдите через сайт — аккаунт выдаёт админ.',
-    code: 'register_disabled',
-  });
+app.post('/api/register', authLimiter, (req, res) => {
+  const username = normalizeUsername(req.body.username || req.body.displayName);
+  const email = normalizeEmail(req.body.email);
+  const password = String(req.body.password || '');
+  const captchaToken = String(req.body.captchaToken || req.body.yacaptchaToken || '');
+
+  // Browser SPA must pass Yacaptcha; native loader / API clients without Origin skip it
+  if (req.headers.origin) {
+    const host = assertYacaptchaHost(req, res);
+    if (!host) return;
+    if (!consumeYacaptchaToken(captchaToken, host)) {
+      return res.status(403).json({ error: 'Captcha verification failed', code: 'yacaptcha' });
+    }
+  }
+
+  if (!username || !email || !password) {
+    return res.status(400).json({ error: 'Заполните все поля', code: 'missing_fields' });
+  }
+  if (username.length < 3 || password.length < 6) {
+    return res.status(400).json({ error: 'Логин от 3 символов, пароль от 6', code: 'validation' });
+  }
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'Некорректный email', code: 'invalid_email' });
+  }
+
+  const conflict = findRegistrationConflict(username, email);
+  if (conflict) {
+    return res.status(409).json({ error: conflict.message, code: conflict.code });
+  }
+
+  const hash = bcrypt.hashSync(password, 10);
+  try {
+    const result = db
+      .prepare('INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)')
+      .run(username, email, hash);
+    const token = jwt.sign(
+      { id: result.lastInsertRowid, username, role: 'user' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    logAction(result.lastInsertRowid, null, req.ip, 'register');
+    const user = getUserRecord(result.lastInsertRowid);
+    res.json({
+      token,
+      username,
+      role: 'user',
+      user: profilePayload(user),
+    });
+  } catch (e) {
+    if (e.message && (e.message.includes('UNIQUE') || e.message.includes('idx_users_'))) {
+      return res.status(409).json({ error: 'Логин или email уже заняты', code: 'taken' });
+    }
+    res.status(500).json({ error: 'Ошибка регистрации', code: 'server_error' });
+  }
 });
 
 app.post('/api/login', authLimiter, (req, res) => {
-  const { login, password } = req.body;
-  if (!login || !password) {
+  const { login, password, username, captchaToken, yacaptchaToken } = req.body;
+  const loginRaw = login || username;
+  if (!loginRaw || !password) {
     return res.status(400).json({ error: 'Введите логин и пароль' });
   }
 
-  const loginTrim = String(login).trim();
+  // Browser SPA / loader UI require Yacaptcha; VirtuGuard console gate has no Origin and skips it
+  const fromLoaderUi = String(req.headers['x-punch-client'] || '').toLowerCase() === 'loader-ui';
+  if (req.headers.origin || fromLoaderUi) {
+    const host = assertYacaptchaHost(req, res);
+    if (!host) return;
+    const captcha = String(captchaToken || yacaptchaToken || '');
+    if (!consumeYacaptchaToken(captcha, host)) {
+      return res.status(403).json({ error: 'Captcha verification failed', code: 'yacaptcha' });
+    }
+  }
+
+  const loginTrim = String(loginRaw).trim();
   const loginLower = loginTrim.toLowerCase();
   const emailNorm = normalizeEmail(loginTrim);
 
@@ -281,11 +486,16 @@ app.post('/api/login', authLimiter, (req, res) => {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
 
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, {
+  const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, {
     expiresIn: '7d',
   });
   logAction(user.id, user.hwid, req.ip, 'login');
-  res.json({ token, username: user.username, role: user.role });
+  res.json({
+    token,
+    username: user.username,
+    role: user.role,
+    user: profilePayload(user),
+  });
 });
 
 // ── Loader handoff ──
@@ -316,6 +526,153 @@ app.get('/api/loader-handoff/:sessionId', apiLimiter, (req, res) => {
   loaderSessions.delete(req.params.sessionId);
   res.json({ token: data.token, username: data.username });
 });
+
+// ── Loader remote control (poll channel) ──
+
+const LOADER_CONTROL_PATH = path.join(__dirname, 'data', 'loader-control.json');
+
+function defaultLoaderControl() {
+  return {
+    version: '0.1.0',
+    commandId: 0,
+    command: null,
+    updatedAt: null,
+  };
+}
+
+function readLoaderControl() {
+  try {
+    if (!fs.existsSync(LOADER_CONTROL_PATH)) return defaultLoaderControl();
+    const raw = JSON.parse(fs.readFileSync(LOADER_CONTROL_PATH, 'utf8'));
+    return { ...defaultLoaderControl(), ...raw };
+  } catch {
+    return defaultLoaderControl();
+  }
+}
+
+function writeLoaderControl(state) {
+  fs.mkdirSync(path.dirname(LOADER_CONTROL_PATH), { recursive: true });
+  fs.writeFileSync(LOADER_CONTROL_PATH, JSON.stringify(state, null, 2));
+}
+
+function issueLoaderCommand(type, message) {
+  const state = readLoaderControl();
+  state.commandId = Number(state.commandId || 0) + 1;
+  state.command = {
+    id: state.commandId,
+    type,
+    message: message || null,
+    createdAt: new Date().toISOString(),
+  };
+  state.updatedAt = state.command.createdAt;
+  writeLoaderControl(state);
+  return state;
+}
+
+app.get('/api/loader/control', authMiddleware, (req, res) => {
+  const state = readLoaderControl();
+  res.json({
+    version: state.version,
+    commandId: state.commandId,
+    command: state.command,
+    updatedAt: state.updatedAt,
+    downloadPath: '/api/loader/binary',
+  });
+});
+
+app.get('/api/loader/binary', authMiddleware, (req, res) => {
+  const user = getUserRecord(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
+    return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
+  }
+  if (!fs.existsSync(LOADER_PATH)) {
+    return res.status(503).json({ error: 'Файл лаунчера временно недоступен' });
+  }
+  return res.download(LOADER_PATH, 'punch-loader.exe');
+});
+
+app.get('/api/admin/loader/control', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
+  const state = readLoaderControl();
+  const exeExists = fs.existsSync(LOADER_PATH);
+  const zipExists = fs.existsSync(LOADER_ZIP);
+  let exeSize = 0;
+  try {
+    if (exeExists) exeSize = fs.statSync(LOADER_PATH).size;
+  } catch {
+    /* ignore */
+  }
+  res.json({
+    ...state,
+    exeExists,
+    zipExists,
+    exeSize,
+    exeName: 'punch-loader.exe',
+  });
+});
+
+app.post('/api/admin/loader/command', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
+  const type = String(req.body?.type || '').trim();
+  if (type !== 'force_update' && type !== 'silent_update') {
+    return res.status(400).json({ error: 'type must be force_update or silent_update' });
+  }
+  const message =
+    type === 'force_update'
+      ? String(req.body?.message || 'Punch has been updated. Please restart loader.').slice(0, 240)
+      : null;
+  if (type === 'silent_update' && !fs.existsSync(LOADER_PATH) && !fs.existsSync(LOADER_ZIP)) {
+    return res.status(503).json({ error: 'Нет файла punch-loader.exe для раздачи' });
+  }
+  const state = issueLoaderCommand(type, message);
+  logAction(req.user.id, null, req.ip, `loader_cmd:${type}:${state.commandId}`);
+  res.json({ ok: true, ...state });
+});
+
+app.post(
+  '/api/admin/loader/publish',
+  authMiddleware,
+  roleMiddleware('admin', 'owner'),
+  express.raw({ type: 'application/octet-stream', limit: '120mb' }),
+  (req, res) => {
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+    if (buf.length < 64 * 1024) {
+      return res.status(400).json({ error: 'Файл слишком маленький (ожидается punch-loader.exe)' });
+    }
+    fs.mkdirSync(LOADER_DIR, { recursive: true });
+    fs.writeFileSync(LOADER_PATH, buf);
+    const state = readLoaderControl();
+    const nextVersion = String(req.query.version || '').trim() || bumpLoaderVersion(state.version);
+    state.version = nextVersion;
+    state.updatedAt = new Date().toISOString();
+    writeLoaderControl(state);
+
+    let commandState = state;
+    if (String(req.query.silent || '') === '1') {
+      commandState = issueLoaderCommand('silent_update', null);
+      commandState.version = nextVersion;
+      writeLoaderControl(commandState);
+    }
+
+    logAction(req.user.id, null, req.ip, `loader_publish:${nextVersion}:${buf.length}`);
+    res.json({
+      ok: true,
+      version: commandState.version,
+      size: buf.length,
+      commandId: commandState.commandId,
+      command: commandState.command,
+    });
+  }
+);
+
+function bumpLoaderVersion(v) {
+  const parts = String(v || '0.1.0')
+    .split('.')
+    .map((n) => parseInt(n, 10));
+  const major = Number.isFinite(parts[0]) ? parts[0] : 0;
+  const minor = Number.isFinite(parts[1]) ? parts[1] : 1;
+  const patch = Number.isFinite(parts[2]) ? parts[2] + 1 : 1;
+  return `${major}.${minor}.${patch}`;
+}
 
 // ── Profile ──
 
@@ -539,26 +896,27 @@ app.post('/api/launcher/chat', authMiddleware, apiLimiter, (req, res) => {
 
 // ── Download launcher ──
 
-app.get('/api/download/launcher', authMiddleware, (req, res) => {
+function sendLauncherDownload(req, res) {
   const user = getUserRecord(req.user.id);
-  if (!isSubscriptionActive(user)) {
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
   if (!fs.existsSync(LOADER_PATH)) {
     return res.status(503).json({ error: 'Файл лаунчера временно недоступен' });
   }
   logAction(user.id, user.hwid, req.ip, 'launcher_download');
-  if (fs.existsSync(LOADER_ZIP)) {
-    return res.download(LOADER_ZIP, 'punch-loader.zip');
-  }
-  res.download(LOADER_PATH, 'punch-loader.exe');
-});
+  return res.download(LOADER_PATH, 'punch-loader.exe');
+}
+
+app.get('/api/download/launcher', authMiddleware, sendLauncherDownload);
+app.get('/api/profile/loader/download', authMiddleware, sendLauncherDownload);
 
 // ── Download client JAR (auth + subscription) ──
 
 app.get('/api/download/client', authMiddleware, async (req, res) => {
   const user = getUserRecord(req.user.id);
-  if (!isSubscriptionActive(user)) {
+  if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
 
@@ -717,6 +1075,102 @@ app.post('/api/verify', apiLimiter, (req, res) => {
 });
 
 // ── Admin API ──
+
+app.get('/api/admin/dashboard', authMiddleware, roleMiddleware('admin', 'moderator', 'owner'), (req, res) => {
+  const users = db
+    .prepare(
+      `SELECT id, username, email, plan, role, hwid, subscription_expires_at, created_at
+       FROM users ORDER BY id DESC LIMIT 500`
+    )
+    .all()
+    .map((u) => ({
+      uid: u.id,
+      id: String(u.id),
+      displayName: u.username,
+      email: u.email,
+      role: u.role === 'owner' ? 'Owner' : u.role === 'admin' ? 'Admin' : u.role === 'moderator' ? 'Helper' : u.role === 'media' ? 'Youtube' : 'User',
+      subscriptionTier: u.plan && u.plan !== 'none' ? u.plan : 'User',
+      createdAt: u.created_at,
+      hardwareId: u.hwid,
+      subscriptionTill: u.subscription_expires_at,
+      twoFactorEnabled: false,
+      isBanned: false,
+      banReason: null,
+      isSystemOwner: u.role === 'owner',
+      lastSeen: null,
+    }));
+
+  const licenseKeys = db
+    .prepare(
+      `SELECT k.*, u.username AS used_by_name
+       FROM license_keys k LEFT JOIN users u ON u.id = k.used_by
+       ORDER BY k.id DESC LIMIT 500`
+    )
+    .all()
+    .map((k) => ({
+      id: String(k.id),
+      code: k.key_code,
+      product: k.plan,
+      subscriptionTier: 'Premium',
+      duration: `${k.duration_days}d`,
+      status: k.used_by ? 'assigned' : 'unused',
+      assignedTo: k.used_by_name || null,
+      createdAt: k.created_at,
+      note: null,
+    }));
+
+  const promoCodes = db
+    .prepare('SELECT * FROM promo_codes ORDER BY id DESC LIMIT 200')
+    .all()
+    .map((p) => ({
+      id: String(p.id),
+      code: p.code,
+      discountPercent: p.discount_percent,
+      maxUses: p.max_uses,
+      uses: p.used_count,
+      status: p.active ? 'active' : 'paused',
+      expiresAt: p.expires_at,
+    }));
+
+  const logs = db
+    .prepare(
+      `SELECT l.*, u.username
+       FROM sessions_log l LEFT JOIN users u ON u.id = l.user_id
+       ORDER BY l.id DESC LIMIT 200`
+    )
+    .all()
+    .map((l) => ({
+      id: String(l.id),
+      actorLabel: l.username || String(l.user_id || '—'),
+      category: 'system',
+      action: l.action,
+      message: l.action,
+      details: l.hwid,
+      entityLabel: l.ip,
+      createdAt: l.created_at,
+    }));
+
+  res.json({
+    data: {
+      users,
+      onlineConnections: [],
+      licenseKeys,
+      promoCodes,
+      launcherVersions: [],
+      updateArtifacts: [],
+      logs,
+      sales: [],
+      salesSummary: {
+        revenueTotal: 0,
+        completedCount: 0,
+        pendingCount: 0,
+        unpaidCount: 0,
+        completedToday: 0,
+        completedThisWeek: 0,
+      },
+    },
+  });
+});
 
 app.get('/api/admin/stats', authMiddleware, roleMiddleware('admin', 'moderator', 'owner'), (req, res) => {
   const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
@@ -904,9 +1358,28 @@ app.post('/api/admin/generate-keys', (req, res) => {
   res.json({ keys });
 });
 
+// SPA fallback for Vite frontend (after API routes; keep /downloads and real files)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  if (req.path.startsWith('/downloads')) return next();
+  const spaIndex = path.join(__dirname, 'public', 'index.html');
+  if (!fs.existsSync(spaIndex)) return next();
+  const filePath = path.join(__dirname, 'public', req.path);
+  if (req.path !== '/' && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    return res.sendFile(filePath);
+  }
+  res.sendFile(spaIndex);
+});
+
 app.listen(PORT, () => {
+  const admin = ensureAdminAccount();
   console.log(`Punch site → http://localhost:${PORT}`);
   console.log(`Punch EBD  → ${DB_PATH}`);
+  if (admin?.created) {
+    console.log(`Punch admin → ${admin.username} / ${admin.password}`);
+  } else {
+    console.log(`Punch admin → ${admin.username} (already exists)`);
+  }
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\nПорт ${PORT} уже занят. Закрой другой сервер или выполни:`);

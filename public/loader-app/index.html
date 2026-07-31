@@ -2,129 +2,160 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Unbounded:wght@400;500;700&display=swap" rel="stylesheet" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Punch Loader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/loader.css" />
 </head>
-<body class="dark">
-<div class="outer-container">
-  <div class="wrapper">
-    <div class="title-drag-area" onmousedown="post('drag_window')"></div>
-    <div class="window-controls">
-      <div class="dot dot-orange" onclick="post('minimize')"></div>
-      <div class="dot dot-red" onclick="post('close')"></div>
-    </div>
+<body>
+  <div class="fx" aria-hidden="true">
+    <canvas id="rays" class="fx__rays"></canvas>
+    <div class="fx__vignette"></div>
+    <div class="fx__noise"></div>
+  </div>
 
-    <div id="toast" class="toast">
-      <div class="toast-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+  <div class="shell" id="appShell">
+    <header class="topbar">
+      <div class="topbar__left">
+        <div class="brand-chip" title="Punch">
+          <img src="assets/punch-logo.jpg" alt="" />
+        </div>
+        <div class="user-card" id="userCard">
+          <div class="user-card__avatar" id="userAvatar">P</div>
+          <div class="user-card__meta">
+            <strong id="userName">—</strong>
+            <span id="userSub">Expired in: —</span>
+          </div>
+        </div>
       </div>
-      <div class="toast-content">
-        <span id="toast-title">Title</span>
-        <span id="toast-desc">Desc</span>
+      <div class="topbar__right" data-no-drag>
+        <button type="button" class="win-btn" onclick="post('minimize')" aria-label="Minimize">—</button>
+        <button type="button" class="win-btn win-btn--close" onclick="post('close')" aria-label="Close">✕</button>
       </div>
-    </div>
+    </header>
 
-    <!-- AUTH -->
-    <div id="auth-screen" class="auth-screen">
-      <div class="auth-logo font-unbounded"><span class="brand-p">P</span>unch</div>
-      <div class="auth-title font-unbounded" id="authTitle">Вход</div>
-      <div class="auth-subtitle text-main" id="authSubtitle">Авторизация через Punch</div>
-      <form id="authForm" class="auth-form" onsubmit="return false;">
-        <label class="auth-label" id="authLoginLabel">Логин
-          <input type="text" id="authLogin" class="auth-input" placeholder="Логин или email" autocomplete="username" />
-        </label>
-        <label class="auth-label" id="authPassLabel">Пароль
-          <input type="password" id="authPass" class="auth-input" placeholder="Пароль" autocomplete="current-password" />
-        </label>
-        <p class="auth-error" id="authError"></p>
-        <button type="submit" class="btn-primary" id="authSubmitBtn">Войти</button>
-      </form>
-      <button type="button" class="btn-ghost" id="authSiteBtn">Войти через сайт</button>
-      <p class="auth-status" id="authSiteStatus"></p>
-    </div>
-
-    <!-- MAIN -->
-    <div id="main-screen" class="screen inactive-right">
-      <div class="header-title font-unbounded text-accent">
-        <svg class="logo-icon" viewBox="0 0 24 24"><path d="M12 2L2 7L12 12L22 7L12 2Z"/><path d="M2 17L12 22L22 17V7L12 12L2 7V17Z"/><path d="M12 22V12"/></svg>
-        <span>Punch</span>
-      </div>
-      <div class="version-row font-unbounded text-accent">Minecraft 1.21</div>
-      <div class="image-frame"></div>
-      <div class="description font-medium text-main" id="mainDesc"></div>
-      <div class="credits text-faint font-medium" id="menuUser">Player</div>
-      <button type="button" class="menu-logout" id="menuLogoutBtn" onclick="logoutAccount()" title="Выйти">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+    <aside class="sidebar">
+      <nav class="sidebar__nav">
+        <button type="button" class="nav-btn is-active" id="navHome" data-view="home" title="Home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11.5 12 4l9 7.5"/><path d="M6.5 10.5V20h11V10.5"/></svg>
+        </button>
+        <button type="button" class="nav-btn" id="navSettings" data-view="settings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </nav>
+      <button type="button" class="nav-btn nav-btn--logout" id="navLogout" title="Logout">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
       </button>
-      <div class="btn-small btn-site font-semibold text-accent" id="btnSiteText" onclick="post('open_site')"></div>
-      <div class="btn-small btn-settings font-semibold text-accent" id="btnSettingsText" onclick="goToSettings()"></div>
-      <button id="mainLaunchBtn" class="btn-launch font-semibold" onclick="post('action_button')"></button>
-    </div>
+    </aside>
 
-    <!-- SETTINGS -->
-    <div id="settings-screen" class="screen inactive-right">
-      <div class="screen-title text-accent" id="settingsTitle"></div>
-      <div class="nick-group">
-        <label class="nick-label" id="nickLabel"></label>
-        <div class="nick-row">
-          <input type="text" id="nicknameInput" class="nick-input" placeholder="Player" maxlength="16" spellcheck="false" autocomplete="off" />
-          <button class="btn-nick-save" id="btnNickSave" onclick="saveNickname()"></button>
+    <main class="content">
+      <!-- AUTH -->
+      <section class="view view--auth is-active" id="view-auth">
+        <div class="auth-panel reveal">
+          <img class="auth-logo" src="assets/punch-logo.jpg" alt="Punch" />
+          <h1>Punch</h1>
+          <p class="lead">Войди, чтобы запускать клиент и синхронизироваться с сайтом.</p>
+          <form id="authForm" class="form" autocomplete="on">
+            <label class="field">
+              <span>Логин или почта</span>
+              <input id="authLogin" name="login" placeholder="punchadmin" required />
+            </label>
+            <label class="field">
+              <span>Пароль</span>
+              <input id="authPass" name="password" type="password" placeholder="••••••••" required />
+            </label>
+            <div class="yacaptcha" id="yacaptcha" data-status="loading">
+              <div class="yacaptcha__row">
+                <button type="button" class="yacaptcha__box" id="yaBox" aria-label="Verify"></button>
+                <div class="yacaptcha__label" id="yaLabel">Загрузка…</div>
+                <div class="yacaptcha__logo">Yacaptcha</div>
+              </div>
+              <div class="yacaptcha__meta">
+                <a class="yacaptcha__protected" href="https://t.me/virtukid" target="_blank" rel="noreferrer">protected by virtukid</a>
+              </div>
+              <p class="yacaptcha__err" id="yaErr" hidden></p>
+            </div>
+            <p class="form-error" id="authError" hidden></p>
+            <button type="submit" class="btn btn--primary btn--block" id="authSubmit">Войти</button>
+          </form>
+          <button type="button" class="btn btn--ghost btn--block" id="authSiteBtn">Войти через сайт</button>
+          <p class="hint" id="authSiteStatus"></p>
         </div>
-      </div>
-      <div class="ram-group">
-        <div class="ram-header font-semibold text-accent">
-          <span id="ramLabel"></span>
-          <span id="ramValue">4096MB</span>
-        </div>
-        <input type="range" min="1024" max="8192" value="4096" step="256" class="slider" id="ramSlider" />
-      </div>
-      <div class="btn-extra-settings" id="btnExtraSettings" onclick="toggleExtraPanel()">
-        <span id="extraSettLabel"></span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-      </div>
-      <div class="btn-back font-semibold text-accent" id="btnSaveExit" onclick="saveAndExitSettings()"></div>
-    </div>
+      </section>
 
-    <!-- LOADING -->
-    <div id="loading-screen" class="screen inactive-right">
-      <div class="screen-title text-accent" id="loadingTitle"></div>
-      <div class="loader-subtitle" id="loaderStatus"></div>
-      <div class="loader-image-large">
-        <div class="checkmark-container" id="successCheck">
-          <svg class="checkmark-svg" viewBox="0 0 52 52"><circle class="checkmark-circle" cx="26" cy="26" r="25" fill="none"/><path class="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/></svg>
+      <!-- HOME / MAINMENU -->
+      <section class="view view--home" id="view-home">
+        <div class="versions reveal">
+          <article class="ver-card ver-card--solo" data-version="1.21.4">
+            <div class="ver-card__bg ver-card__bg--a"></div>
+            <div class="ver-card__shade"></div>
+            <div class="ver-card__meta">
+              <h2>Minecraft 1.21.4</h2>
+              <p>Punch</p>
+            </div>
+            <button type="button" class="play-btn" data-launch="1.21.4" aria-label="Play">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </article>
         </div>
-      </div>
-      <div class="loader-stats-row"><span id="currentMb">0.0MB</span><span id="totalMb">...</span></div>
-      <div class="loader-bar-bg-large"><div class="loader-bar-fill-large" id="loaderFill"></div></div>
-      <div class="btn-cancel" id="btnCancelText" onclick="cancelInstall()"></div>
-    </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view view--settings" id="view-settings">
+        <div class="settings reveal">
+          <div class="panel">
+            <div class="panel__head">
+              <span>RAM</span>
+              <strong id="ramValue">4096mb</strong>
+            </div>
+            <input type="range" id="ramSlider" min="2048" max="16384" step="512" value="4096" />
+          </div>
+          <div class="panel panel--row">
+            <div>
+              <span class="panel__label">Client Resources</span>
+              <p class="panel__hint">Папка клиента и кэш лоудера</p>
+            </div>
+            <button type="button" class="btn btn--soft" id="btnOpenFolder">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>
+              Open Folder
+            </button>
+          </div>
+          <div class="panel">
+            <label class="field">
+              <span>Никнейм</span>
+              <input id="nickInput" maxlength="16" />
+            </label>
+            <button type="button" class="btn btn--primary" id="btnSaveSettings" style="margin-top:14px">Сохранить</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- LAUNCH OVERLAY -->
+      <section class="view view--launch" id="view-launch">
+        <div class="launch reveal">
+          <div class="launch__ring">
+            <svg viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="52" class="launch__track" />
+              <circle cx="60" cy="60" r="52" class="launch__progress" id="launchProgress" />
+            </svg>
+            <span id="launchPercent">0%</span>
+          </div>
+          <h2 id="launchTitle">Loading</h2>
+          <p id="launchStatus">Preparing…</p>
+          <button type="button" class="btn btn--ghost" id="btnCancelLaunch">Отмена</button>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <div class="extra-panel" id="extraPanel">
-    <div class="extra-panel-inner">
-      <div class="extra-title">PUNCH</div>
-      <div class="extra-divider"></div>
-      <div class="extra-section">
-        <div class="extra-section-label" id="extraThemeLabel"></div>
-        <div class="extra-toggle-row">
-          <div class="toggle-btn" id="settBtnDark" onclick="toggleTheme('dark')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z"/></svg>
-          </div>
-          <div class="toggle-btn" id="settBtnLight" onclick="toggleTheme('light')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-          </div>
-        </div>
-      </div>
-      <div class="extra-section">
-        <div class="extra-section-label" id="extraLangLabel"></div>
-        <div class="extra-toggle-row">
-          <div class="toggle-btn" id="settBtnRu" onclick="toggleLang('ru')">RU</div>
-          <div class="toggle-btn" id="settBtnEn" onclick="toggleLang('en')">EN</div>
-        </div>
-      </div>
-    </div>
+  <div class="toast" id="toast" role="status">
+    <strong id="toastTitle"></strong>
+    <span id="toastDesc"></span>
   </div>
-</div>
-<script src="js/loader.js"></script>
+
+  <script src="js/rays.js"></script>
+  <script src="js/loader.js"></script>
 </body>
 </html>

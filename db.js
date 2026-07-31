@@ -295,14 +295,36 @@ function createAdminUser() {
   ensureDb();
   const username = process.env.ADMIN_USERNAME || 'punchadmin';
   const email = normalizeEmail(process.env.ADMIN_EMAIL || 'admin@punch.local');
-  const password = process.env.ADMIN_PASSWORD;
-  if (!password) { console.warn('[Punch] ADMIN_PASSWORD not set'); return null; }
+  const password = process.env.ADMIN_PASSWORD || 'punchadmin';
   const hash = bcrypt.hashSync(password, 10);
   db.prepare(
     `INSERT INTO users (username, email, password_hash, role, plan, subscription_expires_at)
      VALUES (?, ?, ?, 'owner', 'lifetime', datetime('now', '+100 years'))`
   ).run(username, email, hash);
-  return { username, email };
+  return { username, email, password };
+}
+
+/** Ensure owner admin exists for the new Punch site. Default: punchadmin / punchadmin */
+function ensureAdminAccount() {
+  ensureDb();
+  const username = process.env.ADMIN_USERNAME || 'punchadmin';
+  const email = normalizeEmail(process.env.ADMIN_EMAIL || 'admin@punch.local');
+  const password = process.env.ADMIN_PASSWORD || 'punchadmin';
+  const hash = bcrypt.hashSync(password, 10);
+  const existing = db.prepare('SELECT id, role FROM users WHERE username = ? OR email = ?').get(username, email);
+  if (existing) {
+    db.prepare(
+      `UPDATE users
+       SET username = ?, email = ?, password_hash = ?, role = 'owner', plan = 'lifetime',
+           subscription_expires_at = datetime('now', '+100 years')
+       WHERE id = ?`
+    ).run(username, email, hash, existing.id);
+    console.log(`[Punch] Admin synced: ${username}`);
+    return { username, email, created: false, password };
+  }
+  const created = createAdminUser();
+  console.log(`[Punch] Admin account created: ${created.username} / ${password}`);
+  return { username: created.username, email: created.email, created: true, password };
 }
 
 function resetAndSeedAdmin() {
@@ -358,6 +380,7 @@ module.exports = {
   generateKey,
   wipeUsers,
   createAdminUser,
+  ensureAdminAccount,
   resetAndSeedAdmin,
   ensureConfiguredAdminRole,
   normalizeEmail,
