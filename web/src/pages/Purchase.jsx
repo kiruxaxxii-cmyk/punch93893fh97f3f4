@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { apiCreatePayment, apiPaymentPlans, errorMessage } from "../lib/api.js";
+import { apiCreatePayment, apiPaymentPlans, apiValidatePromo, errorMessage } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { useLanguage } from "../lib/lang.jsx";
 import { useNotice } from "../lib/notice.jsx";
@@ -17,6 +17,7 @@ export default function PurchasePage() {
   const [loading, setLoading] = useState(!!slug);
   const [notFound, setNotFound] = useState(false);
   const [promoCode, setPromoCode] = useState("");
+  const [promoHint, setPromoHint] = useState("");
   const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
@@ -67,18 +68,33 @@ export default function PurchasePage() {
       return;
     }
     setRedirecting(true);
-    apiCreatePayment(plan.id, promoCode)
-      .then((url) => {
+    const code = promoCode.trim();
+    const runPay = () =>
+      apiCreatePayment(plan.id, code).then((url) => {
         window.location.href = url;
-      })
-      .catch((err) => {
-        setRedirecting(false);
-        pushNotice({
-          tone: "error",
-          title: copy.paymentErrorTitle,
-          message: errorMessage(err, copy.paymentErrorFallback)
-        });
       });
+
+    const start = code
+      ? apiValidatePromo(code)
+          .then((res) => {
+            setPromoHint(
+              locale === "ru"
+                ? `Промокод −${res.discountPercent}%`
+                : `Promo −${res.discountPercent}%`
+            );
+            return runPay();
+          })
+      : runPay();
+
+    start.catch((err) => {
+      setRedirecting(false);
+      setPromoHint("");
+      pushNotice({
+        tone: "error",
+        title: copy.paymentErrorTitle,
+        message: errorMessage(err, copy.paymentErrorFallback)
+      });
+    });
   };
 
   if (!loading && (notFound || !plan)) {
@@ -120,10 +136,14 @@ export default function PurchasePage() {
             <input
               className="glass-input"
               value={promoCode}
-              onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
+              onChange={(event) => {
+                setPromoCode(event.target.value.toUpperCase());
+                setPromoHint("");
+              }}
               placeholder={copy.promoPlaceholder}
               maxLength={64}
             />
+            {promoHint ? <p className="purchase-page__description">{promoHint}</p> : null}
           </div>
           <div className="purchase-page__actions">
             <ActionButton type="button" variant="primary" className="purchase-page__primary-action" onClick={handleBuy} disabled={redirecting}>

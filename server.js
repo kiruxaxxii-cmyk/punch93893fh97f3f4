@@ -1281,19 +1281,29 @@ app.post('/api/admin/promos', authMiddleware, roleMiddleware('admin', 'owner'), 
     return res.status(400).json({ error: 'Заполните код и скидку' });
   }
   try {
+    const normalized = code.trim().toUpperCase();
+    const discount = Math.min(100, Math.max(1, Number(discountPercent)));
+    const usesCap = Math.max(1, Number(maxUses) || 1);
     const result = db
       .prepare(
         'INSERT INTO promo_codes (code, discount_percent, max_uses, expires_at, created_by, active) VALUES (?, ?, ?, ?, ?, 1)'
       )
-      .run(
-        code.trim().toUpperCase(),
-        Math.min(100, Math.max(1, Number(discountPercent))),
-        Number(maxUses) || 0,
-        expiresAt || null,
-        req.user.id
-      );
-    logAction(req.user.id, null, req.ip, `admin_promo:${code}`);
-    res.json({ id: result.lastInsertRowid, code: code.trim().toUpperCase() });
+      .run(normalized, discount, usesCap, expiresAt || null, req.user.id);
+    logAction(req.user.id, null, req.ip, `admin_promo:${normalized}`);
+    const promo = db.prepare('SELECT * FROM promo_codes WHERE id = ?').get(result.lastInsertRowid);
+    res.json({
+      id: result.lastInsertRowid,
+      code: normalized,
+      promo: {
+        id: String(promo.id),
+        code: promo.code,
+        discountPercent: promo.discount_percent,
+        maxUses: promo.max_uses,
+        uses: promo.used_count,
+        status: promo.active ? 'active' : 'paused',
+        expiresAt: promo.expires_at,
+      },
+    });
   } catch (e) {
     if (e.message.includes('UNIQUE')) {
       return res.status(409).json({ error: 'Промокод уже существует' });
@@ -1304,8 +1314,104 @@ app.post('/api/admin/promos', authMiddleware, roleMiddleware('admin', 'owner'), 
 
 app.patch('/api/admin/promos/:id', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
   const id = Number(req.params.id);
-  const { active } = req.body;
-  db.prepare('UPDATE promo_codes SET active = ? WHERE id = ?').run(active ? 1 : 0, id);
+  const existing = db.prepare('SELECT * FROM promo_codes WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Промокод не найден' });
+
+  const discount =
+    req.body.discountPercent != null
+      ? Math.min(100, Math.max(1, Number(req.body.discountPercent)))
+      : existing.discount_percent;
+  const maxUses =
+    req.body.maxUses != null ? Math.max(1, Number(req.body.maxUses) || 1) : existing.max_uses;
+  const usedCount =
+    req.body.usedCount != null
+      ? Math.max(0, Number(req.body.usedCount) || 0)
+      : existing.used_count;
+  const active =
+    req.body.active != null ? (req.body.active ? 1 : 0) : existing.active;
+  const expiresAt =
+    Object.prototype.hasOwnProperty.call(req.body, 'expiresAt')
+      ? req.body.expiresAt || null
+      : existing.expires_at;
+
+  db.prepare(
+    `UPDATE promo_codes
+     SET discount_percent = ?, max_uses = ?, used_count = ?, active = ?, expires_at = ?
+     WHERE id = ?`
+  ).run(discount, maxUses, usedCount, active, expiresAt, id);
+
+  const promo = db.prepare('SELECT * FROM promo_codes WHERE id = ?').get(id);
+  logAction(req.user.id, null, req.ip, `admin_promo_edit:${promo.code}`);
+  res.json({
+    success: true,
+    promo: {
+      id: String(promo.id),
+      code: promo.code,
+      discountPercent: promo.discount_percent,
+      maxUses: promo.max_uses,
+      uses: promo.used_count,
+      status: promo.active ? 'active' : 'paused',
+      expiresAt: promo.expires_at,
+    },
+  });
+});
+
+app.delete('/api/admin/promos/:id', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM promo_codes WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Промокод не найден' });
+  db.prepare('DELETE FROM promo_codes WHERE id = ?').run(id);
+  logAction(req.user.id, null, req.ip, `admin_promo_del:${existing.code}`);
+  res.json({ success: true });
+});
+
+app.patch('/api/admin/keys/:id', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM license_keys WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Ключ не найден' });
+
+  const validPlans = ['trial', 'month', 'quarter', 'lifetime'];
+  const plan = validPlans.includes(req.body.plan) ? req.body.plan : existing.plan;
+  const durationDays =
+    req.body.durationDays != null
+      ? Math.max(1, Number(req.body.durationDays) || existing.duration_days)
+      : existing.duration_days;
+
+  db.prepare('UPDATE license_keys SET plan = ?, duration_days = ? WHERE id = ?').run(
+    plan,
+    durationDays,
+    id
+  );
+  const key = db
+    .prepare(
+      `SELECT k.*, u.username AS used_by_name
+       FROM license_keys k LEFT JOIN users u ON u.id = k.used_by
+       WHERE k.id = ?`
+    )
+    .get(id);
+  logAction(req.user.id, null, req.ip, `admin_key_edit:${key.key_code}`);
+  res.json({
+    success: true,
+    key: {
+      id: String(key.id),
+      code: key.key_code,
+      product: key.plan,
+      subscriptionTier: 'Premium',
+      duration: `${key.duration_days}d`,
+      status: key.used_by ? 'assigned' : 'unused',
+      assignedTo: key.used_by_name || null,
+      createdAt: key.created_at,
+      note: null,
+    },
+  });
+});
+
+app.delete('/api/admin/keys/:id', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM license_keys WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Ключ не найден' });
+  db.prepare('DELETE FROM license_keys WHERE id = ?').run(id);
+  logAction(req.user.id, null, req.ip, `admin_key_del:${existing.key_code}`);
   res.json({ success: true });
 });
 

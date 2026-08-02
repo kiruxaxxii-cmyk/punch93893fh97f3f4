@@ -734,15 +734,19 @@ export function validateKeyForm(r1, r5) {
 }
 
 export function validatePromoForm(r5, r6) {
-  if (!Number.isInteger(r6.discountPercent) || r6.discountPercent < 1 || r6.discountPercent > 100) {
+  const discount = Number(r6.discountPercent);
+  const maxUses = Number(r6.maxUses);
+  const uses = Number(r6.uses ?? 0);
+  if (!Number.isInteger(discount) || discount < 1 || discount > 100) {
     return r5.status.invalidDiscount;
-  } else if (!Number.isInteger(r6.maxUses) || r6.maxUses < 1) {
-    return r5.status.invalidMaxUses;
-  } else if (!Number.isInteger(r6.uses) || r6.uses < 0 || r6.uses > r6.maxUses) {
-    return r5.status.invalidUses;
-  } else {
-    return null;
   }
+  if (!Number.isInteger(maxUses) || maxUses < 1) {
+    return r5.status.invalidMaxUses;
+  }
+  if (!Number.isInteger(uses) || uses < 0 || uses > maxUses) {
+    return r5.status.invalidUses;
+  }
+  return null;
 }
 
 export function sanitizeAllowedRoles(r1) {

@@ -336,7 +336,7 @@ export default function Admin() {
       assignedToEmail: ("" + (patch.assignedTo ?? existing.assignedTo ?? "")).trim() || null,
       note: ("" + (patch.note ?? existing.note ?? "")).trim() || null
     };
-    const validationError = validateKeyForm(body, copy);
+    const validationError = validateKeyForm(copy, body);
     if (validationError) {
       setStatusText(validationError);
       pushNotice({ tone: "warning", title: locale === "ru" ? "Проверьте ключ" : "Check the key", message: validationError });
@@ -368,7 +368,7 @@ export default function Admin() {
       status: patch.status ?? existing.status,
       expiresAt: ("" + (patch.expiresAt ?? existing.expiresAt ?? "")).trim() || null
     };
-    const validationError = validatePromoForm(body, copy);
+    const validationError = validatePromoForm(copy, body);
     if (validationError) {
       setStatusText(validationError);
       pushNotice({ tone: "warning", title: locale === "ru" ? "Проверьте промокод" : "Check the promocode", message: validationError });
@@ -414,7 +414,7 @@ export default function Admin() {
     const assignedTo = ("" + (keyDraft?.assignedTo ?? "")).trim();
     const note = ("" + (keyDraft?.note ?? "")).trim();
     const body = { product, subscriptionTier, duration, assignedToEmail: assignedTo || null, note: note || null };
-    const validationError = validateKeyForm(body, copy);
+    const validationError = validateKeyForm(copy, body);
     if (validationError) {
       setStatusText(validationError);
       pushNotice({ tone: "warning", title: locale === "ru" ? "Проверьте ключ" : "Check the key", message: validationError });
@@ -442,7 +442,7 @@ export default function Admin() {
     const maxUses = Number(promoDraft?.maxUses ?? 1);
     const expiresAt = ("" + (promoDraft?.expiresAt ?? "")).trim();
     const body = { code: code || undefined, discountPercent, maxUses, uses: 0, expiresAt: expiresAt || null };
-    const validationError = validatePromoForm(body, copy);
+    const validationError = validatePromoForm(copy, body);
     if (validationError) {
       setStatusText(validationError);
       pushNotice({ tone: "warning", title: locale === "ru" ? "Проверьте промокод" : "Check the promocode", message: validationError });

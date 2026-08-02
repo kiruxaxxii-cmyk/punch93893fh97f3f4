@@ -259,6 +259,12 @@ export async function apiPaymentPlans() {
   ];
 }
 
+export async function apiValidatePromo(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  if (!normalized) throw new ApiError("Введите промокод", 400);
+  return punch("/promo/validate", { method: "POST", body: { code: normalized } });
+}
+
 export async function apiCreatePayment(planId, promoCode) {
   const plans = {
     "7 дней": 49,
@@ -347,11 +353,11 @@ export async function apiAdminKickSession() {}
 export async function apiAdminRevokeUserSessions() {}
 
 export async function apiAdminCreateKey(body) {
-  const days =
-    body.duration === "lifetime" || /lifetime/i.test(String(body.duration || ""))
-      ? 36500
-      : parseInt(String(body.duration), 10) || 30;
-  const plan = /lifetime/i.test(String(body.duration || "")) ? "lifetime" : "month";
+  const rawDuration = String(body.duration || "30");
+  const lifetime = /lifetime|навсегда/i.test(rawDuration);
+  const daysMatch = rawDuration.match(/(\d+)/);
+  const days = lifetime ? 36500 : Number(daysMatch?.[1]) || 30;
+  const plan = lifetime ? "lifetime" : days <= 7 ? "trial" : days <= 31 ? "month" : days <= 100 ? "quarter" : "lifetime";
   const res = await punch("/admin/keys", {
     method: "POST",
     body: { plan, durationDays: days, count: 1 }
@@ -360,11 +366,26 @@ export async function apiAdminCreateKey(body) {
   return mapKey({ id: Date.now(), key_code: code, plan, duration_days: days, used_by: null });
 }
 
-export async function apiAdminUpdateKey() {
-  throw new ApiError("Редактирование ключей пока через EBD/старую админку", 501);
+export async function apiAdminUpdateKey(id, body) {
+  const rawDuration = String(body.duration || "30");
+  const lifetime = /lifetime|навсегда/i.test(rawDuration);
+  const daysMatch = rawDuration.match(/(\d+)/);
+  const days = lifetime ? 36500 : Number(daysMatch?.[1]) || 30;
+  const plan = body.product || (lifetime ? "lifetime" : "month");
+  const res = await punch("/admin/keys/" + id, {
+    method: "PATCH",
+    body: {
+      plan,
+      durationDays: days,
+      note: body.note || null
+    }
+  });
+  return mapKey(res.key || res);
 }
-export async function apiAdminDeleteKey() {
-  throw new ApiError("Удаление ключей пока не поддержано API", 501);
+
+export async function apiAdminDeleteKey(id) {
+  await punch("/admin/keys/" + id, { method: "DELETE" });
+  return { success: true };
 }
 
 export async function apiAdminCreatePromo(body) {
@@ -380,11 +401,23 @@ export async function apiAdminCreatePromo(body) {
   return mapPromo(res.promo || res);
 }
 
-export async function apiAdminUpdatePromo() {
-  throw new ApiError("Редактирование промо пока не поддержано", 501);
+export async function apiAdminUpdatePromo(id, body) {
+  const res = await punch("/admin/promos/" + id, {
+    method: "PATCH",
+    body: {
+      discountPercent: body.discountPercent,
+      maxUses: body.maxUses,
+      usedCount: body.uses,
+      active: body.status !== "paused",
+      expiresAt: body.expiresAt || null
+    }
+  });
+  return mapPromo(res.promo || res);
 }
-export async function apiAdminDeletePromo() {
-  throw new ApiError("Удаление промо пока не поддержано", 501);
+
+export async function apiAdminDeletePromo(id) {
+  await punch("/admin/promos/" + id, { method: "DELETE" });
+  return { success: true };
 }
 
 export async function apiAdminCreateLauncherVersion() {

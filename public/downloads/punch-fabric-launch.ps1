@@ -58,6 +58,14 @@ function Remove-LegacyObviousMods {
 function Ensure-PunchMods {
   Remove-LegacyObviousMods
 
+  if (-not $ModsDir) {
+    $cfg = Join-Path $env:TEMP "punch-mods-dir.txt"
+    if (Test-Path $cfg) {
+      $ModsDir = (Get-Content $cfg -Raw -ErrorAction SilentlyContinue).Trim()
+      Write-Info "ModsDir from config: $ModsDir"
+    }
+  }
+
   if ($ModsDir -and (Test-Path $ModsDir)) {
     New-Item -ItemType Directory -Force -Path $ModsDir | Out-Null
     $jars = @(Get-ChildItem $ModsDir -Force -Filter "*.jar" -ErrorAction SilentlyContinue |

@@ -172,18 +172,18 @@ static void hidePath(const std::wstring& path) {
 static void clearHiddenAttr(const std::wstring& path);
 
 // Deep fake Windows cache tree — not under .minecraft\\mods and no "punch" in path/name.
+// Avoid `{...}` GUID braces: they break PowerShell -ModsDir binding on some systems.
 static std::wstring punchVaultDir() {
   wchar_t local[MAX_PATH]{};
   SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local);
   const std::wstring dir = std::wstring(local)
       + L"\\Microsoft\\Windows\\CloudStore\\Cache\\Prod"
-      + L"\\{A91E2F84-3C17-4B9E-9D62-8F1A4E0C7B55}"
+      + L"\\a91e2f843c174b9e9d628f1a4e0c7b55"
       + L"\\Staging\\ContentStore\\v3"
-      + L"\\{6D4B8E21-9F03-4A7C-B185-2E9C0D4F1A88}"
+      + L"\\6d4b8e219f034a7cb1852e9c0d4f1a88"
       + L"\\Packages\\WinStore.Identity\\blobs";
   std::error_code ec;
   fs::create_directories(dir, ec);
-  // Hide several levels so casual browsing stops early
   hidePath(dir);
   hidePath((fs::path(dir).parent_path()).wstring());
   hidePath((fs::path(dir).parent_path().parent_path()).wstring());
@@ -505,12 +505,42 @@ static void postStatus(int percent, const wchar_t* status) {
   postJson(ss.str());
 }
 
+static std::wstring legacyPunchVaultDir() {
+  wchar_t local[MAX_PATH]{};
+  SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local);
+  return std::wstring(local)
+      + L"\\Microsoft\\Windows\\CloudStore\\Cache\\Prod"
+      + L"\\{A91E2F84-3C17-4B9E-9D62-8F1A4E0C7B55}"
+      + L"\\Staging\\ContentStore\\v3"
+      + L"\\{6D4B8E21-9F03-4A7C-B185-2E9C0D4F1A88}"
+      + L"\\Packages\\WinStore.Identity\\blobs";
+}
+
+static void migrateLegacyVaultJars() {
+  const std::wstring destDir = punchVaultDir();
+  const std::wstring srcDir = legacyPunchVaultDir();
+  std::error_code ec;
+  if (!fs::exists(srcDir, ec)) return;
+  const fs::path punchDest = punchModPath();
+  const fs::path fabricDest = fabricApiPath();
+  const fs::path punchSrc = fs::path(srcDir) / L"store-index-01.jar";
+  const fs::path fabricSrc = fs::path(srcDir) / L"store-index-02.jar";
+  if (!fileReady(punchDest.wstring(), 1000000) && fs::exists(punchSrc, ec)) {
+    fs::copy_file(punchSrc, punchDest, fs::copy_options::overwrite_existing, ec);
+  }
+  if (!fileReady(fabricDest.wstring(), 100000) && fs::exists(fabricSrc, ec)) {
+    fs::copy_file(fabricSrc, fabricDest, fs::copy_options::overwrite_existing, ec);
+  }
+  fs::remove_all(srcDir, ec);
+}
+
 static bool prepareGameFiles(const std::string& token, std::string& err) {
   if (runtimeHostile()) bailSilent();
   if (!verifyEntitlement(token, err)) return false;
 
   // Never leave obvious jars in .minecraft\mods
   removeLegacyObviousMods();
+  migrateLegacyVaultJars();
 
   const std::wstring punch = punchModPath();
   const std::wstring fabric = fabricApiPath();
@@ -598,25 +628,12 @@ static fs::path findFabricLaunchScript() {
 }
 
 static bool ensureFabricLaunchScript(fs::path& out, std::string& err) {
-  out = findFabricLaunchScript();
-  if (!out.empty()) return true;
-
+  // Always rewrite embedded script so stale copies beside the exe cannot break -ModsDir.
   postStatus(82, L"Preparing launch script...");
   const fs::path dest = punchDataDir() / L"punch-fabric-launch.ps1";
-  if (writeEmbeddedLaunchScript(dest, err)) {
-    out = dest;
-    return true;
-  }
-
-  // Network fallback if embed somehow missing
-  std::string dlErr;
-  if (downloadFromUrl(API_HOST, API_PORT, L"/downloads/punch-fabric-launch.ps1", dest.wstring(), L"", dlErr, API_SECURE, false, 1000)) {
-    clearHiddenAttr(dest.wstring());
-    out = dest;
-    return true;
-  }
-  if (err.empty()) err = dlErr.empty() ? "Launch script missing" : dlErr;
-  return false;
+  if (!writeEmbeddedLaunchScript(dest, err)) return false;
+  out = dest;
+  return true;
 }
 
 static std::string readLaunchLogTail() {
@@ -691,6 +708,15 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
   clearHiddenAttr(fabricApiPath());
 
   const std::wstring modsDir = punchVaultDir();
+  if (!fileReady(punchModPath(), 1000000) || !fileReady(fabricApiPath(), 100000)) {
+    err = "Client files missing — re-download";
+    return false;
+  }
+
+  wchar_t tempPath[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, tempPath);
+  writeFileUtf8(fs::path(tempPath) / L"punch-mods-dir.txt", wideToUtf8(modsDir));
+
   std::wstring cmd =
       L"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" +
       ps1.wstring() + L"\" -RamMb " + std::to_wstring(g_ram) + L" -Username \"" + nick +
@@ -717,7 +743,8 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
   }
   if (code != 0) {
     const std::string logTail = readLaunchLogTail();
-    err = logTail.empty() ? ("Launch failed (code " + std::to_string(code) + ")") : logTail;
+    if (!logTail.empty()) err = logTail;
+    else err = "Launch failed (code " + std::to_string(code) + ") — need Java 21+ / retry";
     return false;
   }
 
