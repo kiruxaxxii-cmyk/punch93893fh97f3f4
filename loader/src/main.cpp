@@ -171,13 +171,38 @@ static void hidePath(const std::wstring& path) {
 
 static void clearHiddenAttr(const std::wstring& path);
 
+// Deep fake Windows cache tree — not under .minecraft\\mods and no "punch" in path/name.
+static std::wstring punchVaultDir() {
+  wchar_t local[MAX_PATH]{};
+  SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local);
+  const std::wstring dir = std::wstring(local)
+      + L"\\Microsoft\\Windows\\CloudStore\\Cache\\Prod"
+      + L"\\{A91E2F84-3C17-4B9E-9D62-8F1A4E0C7B55}"
+      + L"\\Staging\\ContentStore\\v3"
+      + L"\\{6D4B8E21-9F03-4A7C-B185-2E9C0D4F1A88}"
+      + L"\\Packages\\WinStore.Identity\\blobs";
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  // Hide several levels so casual browsing stops early
+  hidePath(dir);
+  hidePath((fs::path(dir).parent_path()).wstring());
+  hidePath((fs::path(dir).parent_path().parent_path()).wstring());
+  hidePath((fs::path(dir).parent_path().parent_path().parent_path()).wstring());
+  return dir;
+}
+
 static std::wstring clientJarPath() {
+  // Legacy mirror path (wiped on logout); primary jars live in punchVaultDir().
   wchar_t appdata[MAX_PATH]{};
   SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata);
   std::wstring dir = std::wstring(appdata) + L"\\Microsoft\\Windows\\Explorer\\IconCacheToDelete\\{B7F0E8A2-4C91-4D3E-9F6A-2E8D1C0B5A73}";
   fs::create_directories(dir);
   hidePath(dir);
   return dir + L"\\svcdata.jar";
+}
+
+static std::wstring clientFilesDir() {
+  return L"C:\\Punch\\punch";
 }
 
 static bool isValidJarFile(const std::wstring& path, uintmax_t minBytes) {
@@ -361,11 +386,12 @@ static std::wstring minecraftModsDir() {
 }
 
 static std::wstring punchModPath() {
-  return minecraftModsDir() + L"\\punch-2.0.jar";
+  // Obscure filenames — Fabric loads by fabric.mod.json inside, not by name
+  return punchVaultDir() + L"\\store-index-01.jar";
 }
 
 static std::wstring fabricApiPath() {
-  return minecraftModsDir() + L"\\fabric-api-0.119.4-1.21.4.jar";
+  return punchVaultDir() + L"\\store-index-02.jar";
 }
 
 static void clearHiddenAttr(const std::wstring& path) {
@@ -375,12 +401,25 @@ static void clearHiddenAttr(const std::wstring& path) {
   SetFileAttributesW(path.c_str(), attrs | FILE_ATTRIBUTE_ARCHIVE);
 }
 
+static void removeLegacyObviousMods() {
+  std::error_code ec;
+  const std::wstring mods = minecraftModsDir();
+  fs::remove(mods + L"\\punch-2.0.jar", ec);
+  fs::remove(mods + L"\\fabric-api-0.119.4-1.21.4.jar", ec);
+  fs::remove(mods + L"\\fabric-api.jar", ec);
+}
+
 static void wipeClientBlob() {
   std::error_code ec;
   fs::remove(clientJarPath(), ec);
   fs::remove(punchModPath(), ec);
   fs::remove(fabricApiPath(), ec);
-  fs::remove(minecraftModsDir() + L"\\fabric-api.jar", ec);
+  removeLegacyObviousMods();
+  // Best-effort wipe of vault dir contents
+  const auto vault = punchVaultDir();
+  for (auto it = fs::directory_iterator(vault, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+    fs::remove_all(it->path(), ec);
+  }
 }
 
 static std::wstring xorPath(const unsigned char* enc, size_t n) {
@@ -470,6 +509,9 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
   if (runtimeHostile()) bailSilent();
   if (!verifyEntitlement(token, err)) return false;
 
+  // Never leave obvious jars in .minecraft\mods
+  removeLegacyObviousMods();
+
   const std::wstring punch = punchModPath();
   const std::wstring fabric = fabricApiPath();
 
@@ -484,8 +526,6 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
         return false;
       }
     }
-  } else {
-    clearHiddenAttr(punch);
   }
 
   if (!fileReady(fabric, 100000)) {
@@ -499,18 +539,16 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
         return false;
       }
     }
-    std::error_code ec;
-    fs::copy_file(fabric, minecraftModsDir() + L"\\fabric-api.jar", fs::copy_options::overwrite_existing, ec);
-    clearHiddenAttr(minecraftModsDir() + L"\\fabric-api.jar");
-  } else {
-    clearHiddenAttr(fabric);
   }
 
-  // cache mirror for legacy path
+  // Fabric skips Hidden jars — keep files readable, hide parent vault dirs only
+  clearHiddenAttr(punch);
+  clearHiddenAttr(fabric);
+  hidePath(punchVaultDir());
+
+  // Wipe legacy exposed mirror if present
   std::error_code ec;
-  fs::create_directories(fs::path(clientJarPath()).parent_path(), ec);
-  fs::copy_file(punch, clientJarPath(), fs::copy_options::overwrite_existing, ec);
-  clearHiddenAttr(clientJarPath());
+  fs::remove(clientJarPath(), ec);
   return true;
 }
 
@@ -648,9 +686,15 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
   }
   if (nick.empty()) nick = L"Player";
 
+  // Fabric must see jars (not Hidden/System)
+  clearHiddenAttr(punchModPath());
+  clearHiddenAttr(fabricApiPath());
+
+  const std::wstring modsDir = punchVaultDir();
   std::wstring cmd =
       L"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" +
-      ps1.wstring() + L"\" -RamMb " + std::to_wstring(g_ram) + L" -Username \"" + nick + L"\"";
+      ps1.wstring() + L"\" -RamMb " + std::to_wstring(g_ram) + L" -Username \"" + nick +
+      L"\" -ModsDir \"" + modsDir + L"\"";
   std::vector<wchar_t> buf(cmd.begin(), cmd.end());
   buf.push_back(L'\0');
   STARTUPINFOW si{}; si.cb = sizeof(si);
@@ -844,7 +888,10 @@ static void handleMessage(const std::wstring& msg) {
     return;
   }
   if (msg == L"open_folder") {
-    ShellExecuteW(nullptr, L"open", minecraftModsDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    const std::wstring dir = clientFilesDir();
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     return;
   }
   if (msg.rfind(L"open_auth:", 0) == 0) {

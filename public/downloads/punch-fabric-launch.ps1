@@ -2,7 +2,8 @@
 param(
   [int]$RamMb = 4096,
   [string]$Username = "Player",
-  [string]$JavaPath = ""
+  [string]$JavaPath = "",
+  [string]$ModsDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,67 +38,47 @@ function Download-File([string]$Url, [string]$OutFile) {
   Move-Item $tmp $OutFile -Force
 }
 
-function Ensure-PunchMods {
+function Clear-JarHidden([string]$Path) {
+  if (-not (Test-Path $Path -PathType Leaf)) { return }
+  $item = Get-Item $Path -Force
+  $item.Attributes = [System.IO.FileAttributes]::Archive
+}
+
+function Remove-LegacyObviousMods {
   $modsDir = Join-Path $mc "mods"
-  $disabledDir = Join-Path $mc "mods-disabled-by-punch"
-  New-Item -ItemType Directory -Force -Path $modsDir | Out-Null
-  New-Item -ItemType Directory -Force -Path $disabledDir | Out-Null
+  foreach ($name in @("punch-2.0.jar", "fabric-api-0.119.4-1.21.4.jar", "fabric-api.jar")) {
+    $p = Join-Path $modsDir $name
+    if (Test-Path $p) {
+      Write-Info "Removing exposed mod: $name"
+      Remove-Item $p -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
 
-  # Fabric Loader skips Windows Hidden jars - clear H/S from punch + fabric-api.
-  Get-ChildItem $modsDir -Force -Filter "*.jar" -ErrorAction SilentlyContinue | ForEach-Object {
-    $n = $_.Name.ToLowerInvariant()
-    $keep = ($n -eq "punch-2.0.jar") -or ($n -like "fabric-api*.jar")
-    if ($keep) {
-      $_.Attributes = [System.IO.FileAttributes]::Archive
-      Write-Info "Mod ready (unhidden): $($_.Name) ($($_.Length) bytes)"
-    } else {
-      Write-Info "Disabling conflicting mod: $($_.Name)"
-      $dest = Join-Path $disabledDir $_.Name
-      if (Test-Path $dest) { Remove-Item $dest -Force -ErrorAction SilentlyContinue }
-      $_.Attributes = [System.IO.FileAttributes]::Archive
-      Move-Item $_.FullName $dest -Force
+function Ensure-PunchMods {
+  Remove-LegacyObviousMods
+
+  if ($ModsDir -and (Test-Path $ModsDir)) {
+    New-Item -ItemType Directory -Force -Path $ModsDir | Out-Null
+    $jars = @(Get-ChildItem $ModsDir -Force -Filter "*.jar" -ErrorAction SilentlyContinue |
+      Where-Object { $_.Length -gt 100000 })
+    if ($jars.Count -lt 2) {
+      throw "Hidden mods vault incomplete ($($jars.Count) jars). Re-run Punch Loader."
+    }
+    foreach ($j in $jars) {
+      Clear-JarHidden $j.FullName
+      Write-Info "Vault mod ready: $($j.Name) ($($j.Length) bytes)"
+    }
+    # Prefer largest jar as client, second as API (names are obfuscated)
+    $sorted = $jars | Sort-Object Length -Descending
+    return @{
+      Punch = $sorted[0].FullName
+      FabricApi = $sorted[1].FullName
+      ModsFolder = (Resolve-Path $ModsDir).Path
     }
   }
 
-  $punch = Join-Path $modsDir "punch-2.0.jar"
-  $apiNamed = Join-Path $modsDir "fabric-api-0.119.4-1.21.4.jar"
-  $apiAlt = Join-Path $modsDir "fabric-api.jar"
-
-  if (-not (Test-Path $punch) -or ((Get-Item $punch -Force).Length -lt 1000000)) {
-    Write-Info "Downloading punch-2.0.jar into mods..."
-    $urls = @(
-      "https://www.dropbox.com/scl/fi/jd9hjzfswg24zgpd79g6k/punch-2.0.jar?rlkey=6gsifmvn9itrg3t8hezynsyeg&st=c9ti0ofx&dl=1"
-    )
-    $ok = $false
-    foreach ($u in $urls) {
-      try { Download-File $u $punch; $ok = $true; break } catch { Write-Info "punch dl fail: $($_.Exception.Message)" }
-    }
-    if (-not $ok) { throw "Cannot download punch-2.0.jar - check internet" }
-    (Get-Item $punch).Attributes = [System.IO.FileAttributes]::Archive
-  }
-
-  $api = Get-ChildItem $modsDir -Force -Filter "fabric-api*.jar" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Length -gt 100000 } | Select-Object -First 1
-  if (-not $api) {
-    Write-Info "Downloading fabric-api into mods..."
-    $urls = @(
-      "https://www.dropbox.com/scl/fi/zg3vdz6ho6vq4joz1eakc/fabric-api-0.119.4-1.21.4.jar?rlkey=bvwgby3hjwe6e9h08yflb3ycy&st=g9n1cbfj&dl=1"
-    )
-    $ok = $false
-    foreach ($u in $urls) {
-      try { Download-File $u $apiNamed; $ok = $true; break } catch { Write-Info "api dl fail: $($_.Exception.Message)" }
-    }
-    if (-not $ok) { throw "Cannot download fabric-api - check internet" }
-    Copy-Item $apiNamed $apiAlt -Force
-    (Get-Item $apiNamed).Attributes = [System.IO.FileAttributes]::Archive
-    (Get-Item $apiAlt).Attributes = [System.IO.FileAttributes]::Archive
-    $api = Get-Item $apiNamed
-  }
-
-  return @{
-    Punch = (Get-Item $punch -Force).FullName
-    FabricApi = $api.FullName
-  }
+  throw "ModsDir not provided — update punch-loader.exe"
 }
 
 function Ensure-GameFiles {
@@ -127,6 +108,7 @@ try {
 $punchMods = Ensure-PunchMods
 Write-Info "Punch mod: $($punchMods.Punch)"
 Write-Info "Fabric API: $($punchMods.FabricApi)"
+Write-Info "Mods folder: $($punchMods.ModsFolder)"
 Ensure-GameFiles
 
 
@@ -330,7 +312,8 @@ try {
 $main = "net.fabricmc.loader.impl.launch.knot.KnotClient"
 
 # IMPORTANT: one Arguments string - Start-Process array form breaks classpath on ';'
-$modsFolder = Join-Path $mc "mods"
+$modsFolder = $punchMods.ModsFolder
+if (-not $modsFolder) { throw "Mods folder unresolved" }
 
 $arguments = @(
   "-Xmx${RamMb}m",
