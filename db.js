@@ -14,10 +14,28 @@ const DB_PATH = process.env.PUNCH_DB_PATH
   ? path.resolve(process.env.PUNCH_DB_PATH)
   : path.join(dataDir, 'punch-ebd.db');
 
-const BUNDLED_DB_PATH = path.join(__dirname, 'data', 'punch-ebd.db');
+// Seed lives outside data/ so a Railway volume mounted on data/ cannot hide it.
+const BUNDLED_DB_PATH = [
+  path.join(__dirname, 'seed', 'punch-ebd.db'),
+  path.join(__dirname, 'data', 'punch-ebd.db'),
+].find((p) => fs.existsSync(p)) || path.join(__dirname, 'seed', 'punch-ebd.db');
 
 let raw = null;
 let dbInitialized = false;
+
+function fileSha256(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function removeSqliteSidecars(dbFile) {
+  for (const side of ['-wal', '-shm', '.seed-sha']) {
+    try {
+      fs.unlinkSync(dbFile + side);
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function ensureDb() {
   if (dbInitialized) return;
@@ -26,16 +44,36 @@ function ensureDb() {
   if (fs.existsSync(BUNDLED_DB_PATH)) {
     const force = process.env.PUNCH_SEED_DB === '1';
     const sameFile = path.resolve(BUNDLED_DB_PATH) === path.resolve(DB_PATH);
-    if (!sameFile || force) {
-      const runtimeExists = fs.existsSync(DB_PATH);
-      const bundledNewer =
-        runtimeExists &&
-        fs.statSync(BUNDLED_DB_PATH).mtimeMs > fs.statSync(DB_PATH).mtimeMs;
-      if (force || !runtimeExists || bundledNewer) {
-        fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+    const seedSha = fileSha256(BUNDLED_DB_PATH);
+    const markerPath = DB_PATH + '.seed-sha';
+    const appliedSha = fs.existsSync(markerPath)
+      ? fs.readFileSync(markerPath, 'utf8').trim()
+      : '';
+    const runtimeExists = fs.existsSync(DB_PATH);
+    const seedChanged = !appliedSha || appliedSha !== seedSha;
+
+    // Always allow reseeding when seed hash changes or PUNCH_SEED_DB=1.
+    // sameFile alone used to skip forever when a volume overlays data/.
+    if (force || !runtimeExists || seedChanged) {
+      fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+      if (!sameFile) {
+        removeSqliteSidecars(DB_PATH);
         fs.copyFileSync(BUNDLED_DB_PATH, DB_PATH);
-        console.log(`[Punch EBD] Seeded database at ${DB_PATH}`);
+        console.log(`[Punch EBD] Seeded database at ${DB_PATH} (sha ${seedSha.slice(0, 12)})`);
+      } else if (force || seedChanged) {
+        // Seed and runtime are the same path (typical local / no volume).
+        // Still drop stale WAL so we don't mix an old journal with a replaced .db.
+        try {
+          const tmp = new DatabaseSync(DB_PATH);
+          tmp.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          tmp.close();
+        } catch {
+          /* ignore */
+        }
+        removeSqliteSidecars(DB_PATH);
+        console.log(`[Punch EBD] Using bundled database at ${DB_PATH} (sha ${seedSha.slice(0, 12)})`);
       }
+      fs.writeFileSync(markerPath, seedSha);
     }
   }
 
