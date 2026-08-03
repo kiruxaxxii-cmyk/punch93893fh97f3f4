@@ -366,94 +366,106 @@ button { font: inherit; color: inherit; }
   border-radius: 12px;
 }
 
-/* HOME versions */
+/* HOME versions — compact row, not fullscreen hero */
 .versions {
   height: 100%;
-  display: grid;
-  grid-template-rows: 1fr;
-  gap: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
 }
 .ver-card {
   position: relative;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(100%, 360px);
+  height: 76px;
+  padding: 10px 12px 10px 10px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: #101214;
-  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(16, 18, 21, 0.92);
+  box-sizing: border-box;
   isolation: isolate;
-  transition: transform 0.25s ease, border-color 0.25s ease;
+  transition: transform 0.2s ease, border-color 0.2s ease;
 }
-.ver-card--solo {
-  min-height: 100%;
+.ver-card--compact {
+  flex: 0 0 auto;
+  min-height: 76px;
+  max-height: 76px;
+  overflow: hidden;
 }
 .ver-card:hover {
   transform: translateY(-1px);
-  border-color: rgba(175, 175, 175, 0.28);
+  border-color: rgba(220, 220, 220, 0.28);
 }
-.ver-card__bg {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
-  filter: grayscale(1) contrast(1.05) brightness(0.72);
-  transform: scale(1.02);
-  transition: transform 0.5s ease, filter 0.35s ease;
+.ver-card__icon {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0b0c0e;
 }
-.ver-card:hover .ver-card__bg {
-  transform: scale(1.05);
-  filter: grayscale(0.55) contrast(1.08) brightness(0.78);
+.ver-card__icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: grayscale(0.15) contrast(1.05);
 }
-.ver-card__bg--a {
-  background-image:
-    linear-gradient(120deg, rgba(20, 22, 26, 0.2), transparent 40%),
-    radial-gradient(circle at 70% 30%, rgba(175, 175, 175, 0.25), transparent 45%),
-    url("../assets/punch-logo.jpg");
-  background-size: cover, cover, 140%;
-}
+.ver-card__bg,
 .ver-card__shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.78) 100%);
+  display: none !important;
 }
 .ver-card__meta {
-  position: absolute;
-  left: 18px;
-  bottom: 16px;
-  z-index: 2;
+  position: static;
+  flex: 1 1 auto;
+  min-width: 0;
+  z-index: 1;
 }
 .ver-card__meta h2 {
   margin: 0;
-  font-size: 1.55rem;
+  font-size: 1.05rem;
   letter-spacing: -0.02em;
-  font-weight: 600;
+  font-weight: 700;
+  line-height: 1.15;
 }
-.ver-card__meta p {
-  margin: 4px 0 0;
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 0.9rem;
+.ver-card__edition {
+  margin: 0 0 3px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 .play-btn {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  z-index: 2;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(8px);
-  color: #fff;
+  position: static;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  border: 2px solid #fff;
+  background: #f3f3f3;
+  color: #101214;
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: 0.2s ease;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  font-weight: 800;
+  transition: 0.15s ease;
+  z-index: 1;
 }
-.play-btn svg { width: 14px; height: 14px; fill: currentColor; margin-left: 1px; }
+.play-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  margin-left: 2px;
+}
 .play-btn:hover {
-  background: rgba(230, 230, 230, 0.92);
-  color: #101214;
-  transform: scale(1.04);
+  background: #fff;
+  transform: scale(1.05);
 }
 
 /* SETTINGS */

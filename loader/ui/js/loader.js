@@ -278,6 +278,17 @@ function startControlPoll() {
       const cmd = data?.command;
       const id = Number(data?.commandId || cmd?.id || 0);
       if (!cmd || !id || id <= lastCommandId) return;
+
+      // Ignore leftover admin commands (e.g. force_update from days ago)
+      const createdMs = Date.parse(cmd.createdAt || data?.updatedAt || "");
+      if (Number.isFinite(createdMs) && Date.now() - createdMs > 15 * 60 * 1000) {
+        lastCommandId = id;
+        try {
+          localStorage.setItem("punchLoaderCmdId", String(id));
+        } catch (_) {}
+        return;
+      }
+
       lastCommandId = id;
       try {
         localStorage.setItem("punchLoaderCmdId", String(id));
@@ -472,7 +483,13 @@ if (window.chrome?.webview) {
 
     if (data.type === "progress") {
       const status = data.status || "Please wait...";
-      setLaunchProgress(data.percent || 0, "Loading", status);
+      const pct = Number(data.percent);
+      const failed = Number.isFinite(pct) && pct <= 0 && /fail|error|не|stopped|останов/i.test(status);
+      setLaunchProgress(
+        Number.isFinite(pct) ? pct : 0,
+        failed ? "Error" : "Loading",
+        status
+      );
       return;
     }
 

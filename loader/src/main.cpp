@@ -107,7 +107,10 @@ static fs::path findUiHtml() {
 }
 
 static std::wstring uiNavigateUrl() {
-  // Hosted UI → real Origin so Yacaptcha works in WebView2
+  // Prefer UI shipped next to the exe so layout fixes apply without waiting for site deploy.
+  // Captcha still talks to SITE_URL via loader.js resolveSiteUrl fallback.
+  const auto local = findUiHtml();
+  if (!local.empty()) return fileUrl(local);
   return std::wstring(SITE_URL) + L"/loader-app/index.html";
 }
 
@@ -405,6 +408,7 @@ static void removeLegacyObviousMods() {
   std::error_code ec;
   const std::wstring mods = minecraftModsDir();
   fs::remove(mods + L"\\punch-2.0.jar", ec);
+  fs::remove(mods + L"\\punch-2.1.jar", ec);
   fs::remove(mods + L"\\fabric-api-0.119.4-1.21.4.jar", ec);
   fs::remove(mods + L"\\fabric-api.jar", ec);
 }
@@ -432,12 +436,12 @@ static std::wstring xorPath(const unsigned char* enc, size_t n) {
 
 static std::wstring buildClientCdnPath() {
   static const unsigned char enc[] = {
-    0x75,0x29,0x39,0x36,0x75,0x3c,0x33,0x75,0x30,0x3e,0x63,0x32,0x30,0x20,0x3c,0x29,
-    0x2d,0x3d,0x68,0x6e,0x20,0x3d,0x2a,0x3e,0x6d,0x63,0x3d,0x6c,0x31,0x75,0x2a,0x2f,
-    0x34,0x39,0x32,0x77,0x68,0x74,0x6a,0x74,0x30,0x3b,0x28,0x65,0x28,0x36,0x31,0x3f,
-    0x23,0x67,0x6c,0x3d,0x29,0x33,0x3c,0x37,0x2c,0x34,0x63,0x33,0x2e,0x28,0x3d,0x69,
-    0x2e,0x62,0x32,0x3f,0x20,0x23,0x34,0x29,0x23,0x3f,0x3d,0x7c,0x29,0x2e,0x67,0x39,
-    0x63,0x2e,0x33,0x6a,0x35,0x3c,0x22,0x7c,0x3e,0x36,0x67,0x6b
+    0x75,0x29,0x39,0x36,0x75,0x3c,0x33,0x75,0x69,0x36,0x63,0x38,0x32,0x62,0x34,0x31,
+    0x20,0x30,0x33,0x3c,0x3c,0x3d,0x36,0x2b,0x6c,0x29,0x6f,0x68,0x69,0x75,0x2a,0x2f,
+    0x34,0x39,0x32,0x77,0x68,0x74,0x6b,0x77,0x68,0x74,0x30,0x3b,0x28,0x65,0x28,0x36,
+    0x31,0x3f,0x23,0x67,0x3d,0x3c,0x6f,0x63,0x36,0x34,0x39,0x2a,0x34,0x37,0x2a,0x6b,
+    0x32,0x38,0x22,0x2f,0x39,0x3f,0x2d,0x20,0x32,0x68,0x6c,0x6e,0x20,0x7c,0x29,0x2e,
+    0x67,0x6a,0x23,0x34,0x2d,0x69,0x6d,0x2b,0x3e,0x7c,0x3e,0x36,0x67,0x6b
   };
   return xorPath(enc, sizeof(enc));
 }
@@ -534,6 +538,25 @@ static void migrateLegacyVaultJars() {
   fs::remove_all(srcDir, ec);
 }
 
+static const wchar_t* CLIENT_BLOB_VERSION = L"2.1.2";
+
+static std::wstring clientVersionMarkerPath() {
+  return punchVaultDir() + L"\\store-index.ver";
+}
+
+static bool clientVersionCurrent() {
+  std::ifstream in(clientVersionMarkerPath());
+  if (!in) return false;
+  std::string ver;
+  std::getline(in, ver);
+  while (!ver.empty() && (ver.back() == '\r' || ver.back() == '\n')) ver.pop_back();
+  return ver == wideToUtf8(CLIENT_BLOB_VERSION);
+}
+
+static void writeClientVersionMarker() {
+  writeFileUtf8(clientVersionMarkerPath(), wideToUtf8(CLIENT_BLOB_VERSION) + "\n");
+}
+
 static bool prepareGameFiles(const std::string& token, std::string& err) {
   if (runtimeHostile()) bailSilent();
   if (!verifyEntitlement(token, err)) return false;
@@ -545,17 +568,25 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
   const std::wstring punch = punchModPath();
   const std::wstring fabric = fabricApiPath();
 
+  if (!clientVersionCurrent()) {
+    std::error_code ec;
+    fs::remove(punch, ec);
+  }
+
   if (!fileReady(punch, 1000000)) {
-    postStatus(15, L"Downloading client...");
+    postStatus(15, L"Downloading Punch 2.1...");
     std::string cdnErr;
     bool ok = downloadCdnFile(buildClientCdnPath(), punch, cdnErr) && isValidJarFile(punch, 1000000);
     if (!ok) {
-      postStatus(25, L"Downloading client (mirror)...");
+      postStatus(25, L"Downloading Punch 2.1 (mirror)...");
       if (!downloadAuthedJar(token, L"/api/download/client", punch, 1000000, err)) {
         if (err.empty()) err = cdnErr.empty() ? "Client download failed" : cdnErr;
         return false;
       }
     }
+    writeClientVersionMarker();
+  } else if (!clientVersionCurrent()) {
+    writeClientVersionMarker();
   }
 
   if (!fileReady(fabric, 100000)) {
@@ -660,6 +691,25 @@ static std::string readLaunchLogTail() {
   return pick;
 }
 
+static bool launchLogIndicatesSuccess() {
+  wchar_t tempPath[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, tempPath);
+  const fs::path log = fs::path(tempPath) / L"punch-fabric-launch.log";
+  std::ifstream in(log, std::ios::binary);
+  if (!in) return false;
+  std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  return data.find("Java still alive") != std::string::npos &&
+         data.find("ERROR:") == std::string::npos;
+}
+
+static void clearLaunchLog() {
+  wchar_t tempPath[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, tempPath);
+  std::error_code ec;
+  fs::remove(fs::path(tempPath) / L"punch-fabric-launch.log", ec);
+  fs::remove(fs::path(tempPath) / L"punch-game.pid", ec);
+}
+
 static DWORD readGamePidFile() {
   wchar_t tempPath[MAX_PATH]{};
   GetTempPathW(MAX_PATH, tempPath);
@@ -715,6 +765,7 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
 
   wchar_t tempPath[MAX_PATH]{};
   GetTempPathW(MAX_PATH, tempPath);
+  clearLaunchLog();
   writeFileUtf8(fs::path(tempPath) / L"punch-mods-dir.txt", wideToUtf8(modsDir));
 
   std::wstring cmd =
@@ -741,7 +792,22 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
     err = "Launch timed out (libs download)";
     return false;
   }
-  if (code != 0) {
+
+  // PowerShell sometimes returns a non-zero code even after a good launch;
+  // trust the log / live PID when Minecraft is actually running.
+  const bool logOk = launchLogIndicatesSuccess();
+  const DWORD gamePidEarly = readGamePidFile();
+  bool pidAlive = false;
+  if (gamePidEarly) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, gamePidEarly);
+    if (h) {
+      DWORD alive = 0;
+      pidAlive = GetExitCodeProcess(h, &alive) && alive == STILL_ACTIVE;
+      CloseHandle(h);
+    }
+  }
+
+  if (code != 0 && !logOk && !pidAlive) {
     const std::string logTail = readLaunchLogTail();
     if (!logTail.empty()) err = logTail;
     else err = "Launch failed (code " + std::to_string(code) + ") — need Java 21+ / retry";
@@ -1162,12 +1228,52 @@ static std::string readLineConsole() {
   return line;
 }
 
+static std::string readClipboardText() {
+  if (!OpenClipboard(nullptr)) return {};
+  std::string out;
+  if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+    if (const wchar_t* w = static_cast<const wchar_t*>(GlobalLock(h))) {
+      out = wideToUtf8(w);
+      GlobalUnlock(h);
+    }
+  } else if (HANDLE h = GetClipboardData(CF_TEXT)) {
+    if (const char* a = static_cast<const char*>(GlobalLock(h))) {
+      out = a;
+      GlobalUnlock(h);
+    }
+  }
+  CloseClipboard();
+  std::string cleaned;
+  cleaned.reserve(out.size());
+  for (unsigned char c : out) {
+    if (c == '\r' || c == '\n' || c == '\t') continue;
+    if (c >= 32 && c != 127) cleaned.push_back(static_cast<char>(c));
+  }
+  return cleaned;
+}
+
+static void appendHiddenPasswordChars(std::string& pass, const std::string& chunk) {
+  for (unsigned char c : chunk) {
+    if (c < 32 || c == 127) continue;
+    pass.push_back(static_cast<char>(c));
+    std::cout << '*' << std::flush;
+  }
+}
+
 static std::string readHiddenPassword() {
   std::string pass;
   for (;;) {
     const int c = _getch();
     if (c == '\r' || c == '\n') break;
-    if (c == 3) { pass.clear(); break; } // Ctrl+C
+    if (c == 3) { // Ctrl+C
+      pass.clear();
+      break;
+    }
+    // Ctrl+V — paste from clipboard (raw _getch ignores console paste shortcuts)
+    if (c == 22) {
+      appendHiddenPasswordChars(pass, readClipboardText());
+      continue;
+    }
     if (c == 8 || c == 127) {
       if (!pass.empty()) {
         pass.pop_back();
@@ -1175,7 +1281,14 @@ static std::string readHiddenPassword() {
       }
       continue;
     }
-    if (c == 0 || c == 224) { _getch(); continue; }
+    // Extended keys: Shift+Insert often arrives as 0/224 then 0x52 (Insert)
+    if (c == 0 || c == 224) {
+      const int ext = _getch();
+      if (ext == 0x52) { // Insert — treat as paste (Shift+Insert / some terminals)
+        appendHiddenPasswordChars(pass, readClipboardText());
+      }
+      continue;
+    }
     if (c >= 32 && c < 127) {
       pass.push_back(static_cast<char>(c));
       std::cout << '*' << std::flush;
@@ -1201,6 +1314,14 @@ static bool runVirtuGuardGate() {
   SetConsoleTitleW(L"VirtuGuard");
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleCP(CP_UTF8);
+  // Allow mouse/right-click paste & Ctrl shortcuts where the host supports them
+  if (HANDLE hin = GetStdHandle(STD_INPUT_HANDLE); hin && hin != INVALID_HANDLE_VALUE) {
+    DWORD mode = 0;
+    if (GetConsoleMode(hin, &mode)) {
+      mode |= ENABLE_EXTENDED_FLAGS | ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE;
+      SetConsoleMode(hin, mode);
+    }
+  }
   FILE* fout = nullptr;
   FILE* ferr = nullptr;
   FILE* fin = nullptr;
@@ -1218,7 +1339,7 @@ static bool runVirtuGuardGate() {
   consolePrintHugeTitle();
   std::cout << "  Login: " << std::flush;
   const std::string login = readLineConsole();
-  std::cout << "  Password: " << std::flush;
+  std::cout << "  Password (Ctrl+V paste): " << std::flush;
   const std::string password = readHiddenPassword();
   std::cout << "\n";
 

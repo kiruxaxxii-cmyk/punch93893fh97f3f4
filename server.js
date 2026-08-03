@@ -19,7 +19,7 @@ const LOADER_ZIP = path.join(LOADER_DIR, 'punch-loader.zip');
 const CLIENT_JAR_PATH = process.env.CLIENT_JAR_PATH || path.join(LOADER_DIR, 'punch-client.jar');
 const CLIENT_JAR_URL =
   process.env.CLIENT_JAR_URL ||
-  'https://www.dropbox.com/scl/fi/jd9hjzfswg24zgpd79g6k/punch-2.0.jar?rlkey=6gsifmvn9itrg3t8hezynsyeg&st=c9ti0ofx&dl=1';
+  'https://www.dropbox.com/scl/fi/3l9bh8nkzjiffglq6s523/punch-2.1-2.jar?rlkey=gf59lncpnmp1hbxucewzh264z&st=0ynw37qd&dl=1';
 const FABRIC_API_PATH =
   process.env.FABRIC_API_PATH || path.join(LOADER_DIR, 'fabric-api-0.119.4-1.21.4.jar');
 const FABRIC_API_URL =
@@ -544,7 +544,20 @@ function readLoaderControl() {
   try {
     if (!fs.existsSync(LOADER_CONTROL_PATH)) return defaultLoaderControl();
     const raw = JSON.parse(fs.readFileSync(LOADER_CONTROL_PATH, 'utf8'));
-    return { ...defaultLoaderControl(), ...raw };
+    const state = { ...defaultLoaderControl(), ...raw };
+    // Drop stale remote commands so old force_update cannot revive forever
+    if (state.command?.createdAt) {
+      const age = Date.now() - Date.parse(state.command.createdAt);
+      if (!Number.isFinite(age) || age > 15 * 60 * 1000) {
+        state.command = null;
+        try {
+          writeLoaderControl(state);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return state;
   } catch {
     return defaultLoaderControl();
   }

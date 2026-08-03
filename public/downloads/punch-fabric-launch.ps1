@@ -46,7 +46,7 @@ function Clear-JarHidden([string]$Path) {
 
 function Remove-LegacyObviousMods {
   $modsDir = Join-Path $mc "mods"
-  foreach ($name in @("punch-2.0.jar", "fabric-api-0.119.4-1.21.4.jar", "fabric-api.jar")) {
+  foreach ($name in @("punch-2.0.jar", "punch-2.1.jar", "fabric-api-0.119.4-1.21.4.jar", "fabric-api.jar")) {
     $p = Join-Path $modsDir $name
     if (Test-Path $p) {
       Write-Info "Removing exposed mod: $name"
@@ -112,13 +112,110 @@ function Ensure-GameFiles {
   }
 }
 
+function Ensure-Assets {
+  if (-not (Test-Path $vanillaJson)) { throw "Vanilla json missing before assets" }
+  $vj = Get-Content $vanillaJson -Raw | ConvertFrom-Json
+  if (-not $vj.assetIndex -or -not $vj.assetIndex.url -or -not $vj.assetIndex.id) {
+    throw "No assetIndex in 1.21.4.json"
+  }
+
+  $idxId = [string]$vj.assetIndex.id
+  $idxPath = Join-Path $assets "indexes\$idxId.json"
+  New-Item -ItemType Directory -Force -Path (Join-Path $assets "indexes") | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $assets "objects") | Out-Null
+
+  if (-not (Test-Path $idxPath) -or ((Get-Item $idxPath).Length -lt 10000)) {
+    Write-Info "Downloading assets index $idxId..."
+    Download-File $vj.assetIndex.url $idxPath
+  }
+
+  $index = Get-Content $idxPath -Raw | ConvertFrom-Json
+  $props = @($index.objects.PSObject.Properties)
+  $total = $props.Count
+  if ($total -lt 100) { throw "Assets index looks broken ($total entries)" }
+
+  $pending = @()
+  foreach ($p in $props) {
+    $hash = [string]$p.Value.hash
+    if (-not $hash -or $hash.Length -lt 4) { continue }
+    $size = [int64]$p.Value.size
+    $sub = $hash.Substring(0, 2)
+    $out = Join-Path $assets "objects\$sub\$hash"
+    if ((Test-Path $out) -and ((Get-Item $out).Length -eq $size)) { continue }
+    $pending += [pscustomobject]@{ Hash = $hash; Sub = $sub; Out = $out; Size = $size }
+  }
+
+  if ($pending.Count -eq 0) {
+    Write-Info "Assets already complete ($total files)"
+    return $idxId
+  }
+
+  $mb = [math]::Round((($pending | Measure-Object -Property Size -Sum).Sum / 1MB), 1)
+  Write-Info ("Downloading Minecraft assets: {0} missing / {1} total (~{2} MB)..." -f $pending.Count, $total, $mb)
+
+  $workers = [Math]::Min(8, [Math]::Max(1, $pending.Count))
+  $chunkSize = [Math]::Ceiling($pending.Count / $workers)
+  $jobs = @()
+  for ($i = 0; $i -lt $pending.Count; $i += $chunkSize) {
+    $end = [Math]::Min($i + $chunkSize - 1, $pending.Count - 1)
+    $chunk = @($pending[$i..$end])
+    $jobs += Start-Job -ScriptBlock {
+      param($items)
+      $ok = 0
+      $fail = 0
+      foreach ($item in $items) {
+        try {
+          $dir = Split-Path $item.Out
+          if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+          $url = "https://resources.download.minecraft.net/$($item.Sub)/$($item.Hash)"
+          $tmp = $item.Out + ".tmp"
+          Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 90
+          if ($item.Size -gt 0 -and ((Get-Item $tmp).Length -ne $item.Size)) {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            $fail++
+            continue
+          }
+          Move-Item $tmp $item.Out -Force
+          $ok++
+        } catch {
+          $fail++
+          Remove-Item ($item.Out + ".tmp") -Force -ErrorAction SilentlyContinue
+        }
+      }
+      return @{ Ok = $ok; Fail = $fail }
+    } -ArgumentList (,$chunk)
+  }
+
+  $okTotal = 0
+  $failTotal = 0
+  while ($jobs | Where-Object { $_.State -eq "Running" }) {
+    $running = @($jobs | Where-Object { $_.State -eq "Running" }).Count
+    Write-Info ("Assets download workers running: $running / $($jobs.Count)")
+    Start-Sleep -Seconds 5
+  }
+  foreach ($j in $jobs) {
+    $r = Receive-Job $j -ErrorAction SilentlyContinue
+    if ($r) {
+      $okTotal += [int]$r.Ok
+      $failTotal += [int]$r.Fail
+    }
+    Remove-Job $j -Force -ErrorAction SilentlyContinue
+  }
+
+  Write-Info ("Assets download finished: ok={0} fail={1}" -f $okTotal, $failTotal)
+  if ($failTotal -gt [math]::Max(50, [int]($pending.Count * 0.05))) {
+    throw "Too many asset download failures ($failTotal). Check internet and retry."
+  }
+  return $idxId
+}
+
 try {
 $punchMods = Ensure-PunchMods
 Write-Info "Punch mod: $($punchMods.Punch)"
 Write-Info "Fabric API: $($punchMods.FabricApi)"
 Write-Info "Mods folder: $($punchMods.ModsFolder)"
 Ensure-GameFiles
-
+$assetIndex = Ensure-Assets
 
 function Get-LibPath([string]$name) {
   $parts = $name.Split(":")
@@ -311,11 +408,7 @@ Write-Info "Libraries: $($cp.Count)"
 Write-Info "Natives: $natives"
 
 $uuid = "00000000-0000-0000-0000-000000000000"
-$assetIndex = "19"
-try {
-  $vj = Get-Content $vanillaJson -Raw | ConvertFrom-Json
-  if ($vj.assetIndex.id) { $assetIndex = $vj.assetIndex.id }
-} catch {}
+if (-not $assetIndex) { $assetIndex = "19" }
 
 $main = "net.fabricmc.loader.impl.launch.knot.KnotClient"
 
@@ -328,7 +421,7 @@ $arguments = @(
   "-Xms512m",
   "-Djava.library.path=`"$natives`"",
   "-Dminecraft.launcher.brand=punch",
-  "-Dminecraft.launcher.version=2.0.11",
+  "-Dminecraft.launcher.version=2.1.0",
   "-Dfabric.modsFolder=`"$modsFolder`"",
   "-DFabricMcEmu=`" net.minecraft.client.main.Main `"",
   "-cp",
@@ -359,15 +452,15 @@ Write-Info "PID $($p.Id)"
 $pidFile = Join-Path $env:TEMP "punch-game.pid"
 Set-Content -Path $pidFile -Value "$($p.Id)" -Encoding ASCII
 
-Start-Sleep -Seconds 5
+Start-Sleep -Seconds 8
 if ($p.HasExited) {
-  throw "Java exited immediately (code $($p.ExitCode)). See $logFile and %APPDATA%\.minecraft\logs\latest.log"
+  throw "Java exited immediately (code $($p.ExitCode)). Missing assets/Java? See $logFile and %APPDATA%\.minecraft\logs\latest.log"
 }
-Write-Info "Java still alive after 5s"
-exit 0
+Write-Info "Java still alive after 8s"
+[Environment]::Exit(0)
 } catch {
   $msg = $_.Exception.Message
   Write-Info "ERROR: $msg"
   Write-Info "ERROR details: $($_.ScriptStackTrace)"
-  exit 1
+  [Environment]::Exit(1)
 }
