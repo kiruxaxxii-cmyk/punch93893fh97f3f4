@@ -293,9 +293,18 @@ function getEbdInfo() {
   const stat = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH) : null;
   const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   const keys = db.prepare('SELECT COUNT(*) AS c FROM license_keys').get().c;
+  const keysUsed = db.prepare('SELECT COUNT(*) AS c FROM license_keys WHERE used_by IS NOT NULL').get().c;
   const promos = db.prepare('SELECT COUNT(*) AS c FROM promo_codes').get().c;
   const chat = db.prepare('SELECT COUNT(*) AS c FROM launcher_chat').get().c;
   const logs = db.prepare('SELECT COUNT(*) AS c FROM sessions_log').get().c;
+  const payments = db.prepare('SELECT COUNT(*) AS c FROM payments').get().c;
+  const activeSubs = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM users
+       WHERE subscription_expires_at IS NOT NULL
+         AND datetime(subscription_expires_at) > datetime('now')`
+    )
+    .get().c;
   const duplicateEmails = db
     .prepare(
       `SELECT LOWER(TRIM(email)) AS email, COUNT(*) AS count,
@@ -310,13 +319,18 @@ function getEbdInfo() {
        FROM users GROUP BY LOWER(TRIM(username)) HAVING count > 1`
     )
     .all();
+  const markerPath = DB_PATH + '.seed-sha';
+  const seedSha = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, 'utf8').trim() : null;
   return {
     name: 'EBD — Единая база данных Punch',
-    path: DB_PATH, dataDir,
+    path: DB_PATH,
+    dataDir,
     sizeBytes: stat?.size ?? 0,
     updatedAt: stat?.mtime?.toISOString() ?? null,
-    tables: { users, keys, promos, chat, logs },
-    duplicateEmails, duplicateUsernames,
+    seedSha: seedSha ? seedSha.slice(0, 12) : null,
+    tables: { users, keys, keysUsed, promos, chat, logs, payments, activeSubs },
+    duplicateEmails,
+    duplicateUsernames,
     healthy: duplicateEmails.length === 0 && duplicateUsernames.length === 0,
   };
 }

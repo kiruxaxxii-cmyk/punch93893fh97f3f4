@@ -114,6 +114,22 @@ export default function EbdSection({ copy, locale, pushNotice }) {
           <span>{copy.ebd.users}</span>
           <strong>{info?.tables?.users ?? "—"}</strong>
         </div>
+        <div className="ebd-panel__card">
+          <span>{locale === "ru" ? "Подписки" : "Active subs"}</span>
+          <strong>{info?.tables?.activeSubs ?? "—"}</strong>
+        </div>
+        <div className="ebd-panel__card">
+          <span>{locale === "ru" ? "Ключи" : "Keys"}</span>
+          <strong>
+            {info?.tables?.keysUsed != null
+              ? `${info.tables.keysUsed}/${info.tables.keys}`
+              : (info?.tables?.keys ?? "—")}
+          </strong>
+        </div>
+        <div className="ebd-panel__card">
+          <span>Seed</span>
+          <strong>{info?.seedSha ?? "—"}</strong>
+        </div>
       </div>
       <div className="ebd-panel__actions">
         <ActionButton type="button" variant="secondary" disabled={busy} onClick={() => void load()}>

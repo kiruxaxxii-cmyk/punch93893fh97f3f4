@@ -25,6 +25,11 @@ const FABRIC_API_PATH =
 const FABRIC_API_URL =
   process.env.FABRIC_API_URL ||
   'https://www.dropbox.com/scl/fi/zg3vdz6ho6vq4joz1eakc/fabric-api-0.119.4-1.21.4.jar?rlkey=bvwgby3hjwe6e9h08yflb3ycy&st=g9n1cbfj&dl=1';
+const IAS_JAR_PATH =
+  process.env.IAS_JAR_PATH || path.join(LOADER_DIR, 'IAS-9.0.7-1.21.4-fabric.jar');
+const IAS_JAR_URL =
+  process.env.IAS_JAR_URL ||
+  'https://www.dropbox.com/scl/fi/ixcy2pscnxth62xfyc0pa/IAS-9.0.7-1.21.4-fabric.jar?rlkey=j77mm8eunh6ihe084vlu7s5cn&st=vg2wvadw&dl=1';
 
 const SHOP_PLANS = {
   '7 дней': { plan: 'trial', days: 7, price: 49 },
@@ -226,7 +231,10 @@ function logAction(userId, hwid, ip, action) {
 
 function parseDbDate(value) {
   if (!value) return null;
-  const d = new Date(value);
+  const raw = String(value).trim();
+  // SQLite datetime('now') → "YYYY-MM-DD HH:MM:SS" — normalize for reliable JS parse
+  const normalized = /^\d{4}-\d{2}-\d{2} /.test(raw) ? raw.replace(' ', 'T') : raw;
+  const d = new Date(normalized);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -991,6 +999,39 @@ app.get('/api/download/fabric-api', authMiddleware, async (req, res) => {
   return res.status(503).json({ error: 'Fabric API временно недоступен' });
 });
 
+// ── Download IAS (In-Game Account Switcher) ──
+
+app.get('/api/download/ias', authMiddleware, async (req, res) => {
+  const user = getUserRecord(req.user.id);
+  if (!isSubscriptionActive(user)) {
+    return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
+  }
+
+  logAction(user.id, user.hwid, req.ip, 'ias_download');
+
+  if (fs.existsSync(IAS_JAR_PATH)) {
+    return res.download(IAS_JAR_PATH, 'IAS-9.0.7-1.21.4-fabric.jar');
+  }
+
+  if (IAS_JAR_URL) {
+    try {
+      const upstream = await fetch(IAS_JAR_URL);
+      if (!upstream.ok) {
+        return res.status(503).json({ error: 'IAS временно недоступен' });
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader('Content-Type', 'application/java-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="IAS-9.0.7-1.21.4-fabric.jar"');
+      res.setHeader('Content-Length', buf.length);
+      return res.send(buf);
+    } catch {
+      return res.status(503).json({ error: 'IAS временно недоступен' });
+    }
+  }
+
+  return res.status(503).json({ error: 'IAS временно недоступен' });
+});
+
 // ── Key activation ──
 
 app.post('/api/activate-key', authMiddleware, (req, res) => {
@@ -1073,7 +1114,9 @@ app.post('/api/verify', apiLimiter, (req, res) => {
     return res.status(400).json({ valid: false, error: 'missing_params' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim());
+  const user = db
+    .prepare('SELECT * FROM users WHERE LOWER(TRIM(username)) = ?')
+    .get(String(username).trim().toLowerCase());
   if (!user) return res.json({ valid: false, error: 'user_not_found' });
   if (!isSubscriptionActive(user)) return res.json({ valid: false, error: 'no_subscription' });
   if (!user.hwid) return res.json({ valid: false, error: 'hwid_not_bound' });

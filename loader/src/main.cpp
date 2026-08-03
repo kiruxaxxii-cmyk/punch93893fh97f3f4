@@ -397,6 +397,10 @@ static std::wstring fabricApiPath() {
   return punchVaultDir() + L"\\store-index-02.jar";
 }
 
+static std::wstring iasModPath() {
+  return punchVaultDir() + L"\\store-index-03.jar";
+}
+
 static void clearHiddenAttr(const std::wstring& path) {
   DWORD attrs = GetFileAttributesW(path.c_str());
   if (attrs == INVALID_FILE_ATTRIBUTES) return;
@@ -411,6 +415,8 @@ static void removeLegacyObviousMods() {
   fs::remove(mods + L"\\punch-2.1.jar", ec);
   fs::remove(mods + L"\\fabric-api-0.119.4-1.21.4.jar", ec);
   fs::remove(mods + L"\\fabric-api.jar", ec);
+  fs::remove(mods + L"\\IAS-9.0.7-1.21.4-fabric.jar", ec);
+  fs::remove(mods + L"\\ias.jar", ec);
 }
 
 static void wipeClientBlob() {
@@ -418,6 +424,7 @@ static void wipeClientBlob() {
   fs::remove(clientJarPath(), ec);
   fs::remove(punchModPath(), ec);
   fs::remove(fabricApiPath(), ec);
+  fs::remove(iasModPath(), ec);
   removeLegacyObviousMods();
   // Best-effort wipe of vault dir contents
   const auto vault = punchVaultDir();
@@ -455,6 +462,19 @@ static std::wstring buildFabricCdnPath() {
     0x23,0x67,0x38,0x2c,0x2d,0x3d,0x38,0x23,0x69,0x32,0x30,0x2d,0x3f,0x6c,0x3f,0x63,
     0x32,0x6a,0x62,0x23,0x3c,0x36,0x38,0x69,0x23,0x39,0x23,0x7c,0x29,0x2e,0x67,0x3d,
     0x63,0x34,0x6b,0x39,0x38,0x3c,0x30,0x7c,0x3e,0x36,0x67,0x6b
+  };
+  return xorPath(enc, sizeof(enc));
+}
+
+static std::wstring buildIasCdnPath() {
+  static const unsigned char enc[] = {
+    0x75,0x29,0x39,0x36,0x75,0x3c,0x33,0x75,0x33,0x22,0x39,0x23,0x68,0x2a,0x29,0x39,
+    0x34,0x22,0x2e,0x32,0x6c,0x68,0x22,0x3c,0x23,0x39,0x6a,0x2a,0x3b,0x75,0x13,0x1b,
+    0x09,0x77,0x63,0x74,0x6a,0x74,0x6d,0x77,0x6b,0x74,0x68,0x6b,0x74,0x6e,0x77,0x3c,
+    0x3b,0x38,0x28,0x33,0x39,0x74,0x30,0x3b,0x28,0x65,0x28,0x36,0x31,0x3f,0x23,0x67,
+    0x30,0x6d,0x6d,0x37,0x37,0x62,0x3f,0x2f,0x34,0x32,0x6c,0x33,0x32,0x3f,0x6a,0x62,
+    0x6e,0x2c,0x36,0x2f,0x6d,0x29,0x6f,0x39,0x34,0x7c,0x29,0x2e,0x67,0x2c,0x3d,0x68,
+    0x2d,0x2c,0x3b,0x3e,0x2d,0x7c,0x3e,0x36,0x67,0x6b
   };
   return xorPath(enc, sizeof(enc));
 }
@@ -538,7 +558,7 @@ static void migrateLegacyVaultJars() {
   fs::remove_all(srcDir, ec);
 }
 
-static const wchar_t* CLIENT_BLOB_VERSION = L"2.1.3";
+static const wchar_t* CLIENT_BLOB_VERSION = L"2.1.3-ias";
 
 static std::wstring clientVersionMarkerPath() {
   return punchVaultDir() + L"\\store-index.ver";
@@ -567,6 +587,7 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
 
   const std::wstring punch = punchModPath();
   const std::wstring fabric = fabricApiPath();
+  const std::wstring ias = iasModPath();
 
   if (!clientVersionCurrent()) {
     std::error_code ec;
@@ -590,13 +611,26 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
   }
 
   if (!fileReady(fabric, 100000)) {
-    postStatus(55, L"Downloading Fabric API...");
+    postStatus(45, L"Downloading Fabric API...");
     std::string cdnErr;
     bool ok = downloadCdnFile(buildFabricCdnPath(), fabric, cdnErr) && isValidJarFile(fabric, 100000);
     if (!ok) {
-      postStatus(65, L"Downloading Fabric API (mirror)...");
+      postStatus(55, L"Downloading Fabric API (mirror)...");
       if (!downloadAuthedJar(token, L"/api/download/fabric-api", fabric, 100000, err)) {
         if (err.empty()) err = cdnErr.empty() ? "Fabric API download failed" : cdnErr;
+        return false;
+      }
+    }
+  }
+
+  if (!fileReady(ias, 10000)) {
+    postStatus(70, L"Downloading IAS...");
+    std::string cdnErr;
+    bool ok = downloadCdnFile(buildIasCdnPath(), ias, cdnErr) && isValidJarFile(ias, 10000);
+    if (!ok) {
+      postStatus(78, L"Downloading IAS (mirror)...");
+      if (!downloadAuthedJar(token, L"/api/download/ias", ias, 10000, err)) {
+        if (err.empty()) err = cdnErr.empty() ? "IAS download failed" : cdnErr;
         return false;
       }
     }
@@ -605,6 +639,7 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
   // Fabric skips Hidden jars — keep files readable, hide parent vault dirs only
   clearHiddenAttr(punch);
   clearHiddenAttr(fabric);
+  clearHiddenAttr(ias);
   hidePath(punchVaultDir());
 
   // Wipe legacy exposed mirror if present
@@ -756,9 +791,11 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
   // Fabric must see jars (not Hidden/System)
   clearHiddenAttr(punchModPath());
   clearHiddenAttr(fabricApiPath());
+  clearHiddenAttr(iasModPath());
 
   const std::wstring modsDir = punchVaultDir();
-  if (!fileReady(punchModPath(), 1000000) || !fileReady(fabricApiPath(), 100000)) {
+  if (!fileReady(punchModPath(), 1000000) || !fileReady(fabricApiPath(), 100000) ||
+      !fileReady(iasModPath(), 10000)) {
     err = "Client files missing — re-download";
     return false;
   }
@@ -809,8 +846,16 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
 
   if (code != 0 && !logOk && !pidAlive) {
     const std::string logTail = readLaunchLogTail();
-    if (!logTail.empty()) err = logTail;
-    else err = "Launch failed (code " + std::to_string(code) + ") — need Java 21+ / retry";
+    if (!logTail.empty()) {
+      err = logTail;
+      // Drop noisy prefix so UI shows the real reason
+      const std::string marker = "[punch] ERROR: ";
+      const auto pos = err.find(marker);
+      if (pos != std::string::npos) err = err.substr(pos + marker.size());
+      else if (err.rfind("[punch] ", 0) == 0) err = err.substr(8);
+    } else {
+      err = "Launch failed (code " + std::to_string(code) + ") — check Java 21+ / see %TEMP%\\punch-fabric-launch.log";
+    }
     return false;
   }
 

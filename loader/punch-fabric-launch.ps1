@@ -46,7 +46,7 @@ function Clear-JarHidden([string]$Path) {
 
 function Remove-LegacyObviousMods {
   $modsDir = Join-Path $mc "mods"
-  foreach ($name in @("punch-2.0.jar", "punch-2.1.jar", "fabric-api-0.119.4-1.21.4.jar", "fabric-api.jar")) {
+  foreach ($name in @("punch-2.0.jar", "punch-2.1.jar", "fabric-api-0.119.4-1.21.4.jar", "fabric-api.jar", "IAS-9.0.7-1.21.4-fabric.jar", "ias.jar")) {
     $p = Join-Path $modsDir $name
     if (Test-Path $p) {
       Write-Info "Removing exposed mod: $name"
@@ -70,18 +70,19 @@ function Ensure-PunchMods {
     New-Item -ItemType Directory -Force -Path $ModsDir | Out-Null
     $jars = @(Get-ChildItem $ModsDir -Force -Filter "*.jar" -ErrorAction SilentlyContinue |
       Where-Object { $_.Length -gt 100000 })
-    if ($jars.Count -lt 2) {
-      throw "Hidden mods vault incomplete ($($jars.Count) jars). Re-run Punch Loader."
+    if ($jars.Count -lt 3) {
+      throw "Hidden mods vault incomplete ($($jars.Count) jars, need 3). Re-run Punch Loader."
     }
     foreach ($j in $jars) {
       Clear-JarHidden $j.FullName
       Write-Info "Vault mod ready: $($j.Name) ($($j.Length) bytes)"
     }
-    # Prefer largest jar as client, second as API (names are obfuscated)
+    # Prefer largest jar as client; names are obfuscated
     $sorted = $jars | Sort-Object Length -Descending
     return @{
       Punch = $sorted[0].FullName
       FabricApi = $sorted[1].FullName
+      Ias = ($sorted | Where-Object { $_.Length -lt 1000000 } | Select-Object -First 1).FullName
       ModsFolder = (Resolve-Path $ModsDir).Path
     }
   }
