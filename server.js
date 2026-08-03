@@ -19,7 +19,7 @@ const LOADER_ZIP = path.join(LOADER_DIR, 'punch-loader.zip');
 const CLIENT_JAR_PATH = process.env.CLIENT_JAR_PATH || path.join(LOADER_DIR, 'punch-client.jar');
 const CLIENT_JAR_URL =
   process.env.CLIENT_JAR_URL ||
-  'https://www.dropbox.com/scl/fi/3l9bh8nkzjiffglq6s523/punch-2.1-2.jar?rlkey=gf59lncpnmp1hbxucewzh264z&st=0ynw37qd&dl=1';
+  'https://www.dropbox.com/scl/fi/j1iltxe8ugdbo77bvhsb7/punch-2.1-3.jar?rlkey=qml7yxqsoey32ar1fgv8m1am7&st=ihy2frs3&dl=1';
 const FABRIC_API_PATH =
   process.env.FABRIC_API_PATH || path.join(LOADER_DIR, 'fabric-api-0.119.4-1.21.4.jar');
 const FABRIC_API_URL =
