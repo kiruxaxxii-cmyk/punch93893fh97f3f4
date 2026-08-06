@@ -69,7 +69,10 @@ export const PROFILE_COPY = {
       active: "active",
       expired: "expired",
       lifetime: "lifetime",
-      dash: "-"
+      dash: "-",
+      bannedLabel: "Banned",
+      bannedForever: "forever",
+      bannedUntil: "until"
     },
     sections: {
       sessionsTitle: "Active sessions",
@@ -163,7 +166,10 @@ export const PROFILE_COPY = {
       active: "активен",
       expired: "истекла",
       lifetime: "навсегда",
-      dash: "-"
+      dash: "-",
+      bannedLabel: "Забанен",
+      bannedForever: "навсегда",
+      bannedUntil: "до"
     },
     sections: {
       sessionsTitle: "Активные сессии",

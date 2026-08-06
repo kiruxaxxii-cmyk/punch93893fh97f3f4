@@ -70,7 +70,10 @@ export function mapPunchUser(u) {
   if (!u) return null;
   const role = mapRole(u.role);
   const plan = String(u.plan || "").toLowerCase();
-  const active = !!u.subscriptionActive || !!u.canDownloadLauncher || plan === "lifetime" || role === "Owner" || role === "Admin";
+  const isBanned = !!u.isBanned;
+  const active =
+    !isBanned &&
+    (!!u.subscriptionActive || !!u.canDownloadLauncher || plan === "lifetime" || role === "Owner" || role === "Admin");
   const expires = u.subscriptionExpiresAt || u.subscription_expires_at || null;
   return {
     uid: Number(u.id) || 0,
@@ -86,8 +89,10 @@ export function mapPunchUser(u) {
     promoCode: null,
     subscriptionTill: active && (plan === "lifetime" || role === "Owner") ? "Lifetime" : expires,
     twoFactorEnabled: false,
-    isBanned: false,
-    banReason: null,
+    isBanned,
+    banReason: u.banReason || u.ban_reason || null,
+    bannedUntil: u.bannedUntil || u.banned_until || null,
+    banPermanent: !!u.banPermanent,
     isSystemOwner: String(u.role || "").toLowerCase() === "owner" || role === "Owner",
     lastSeen: null,
     canDownloadLauncher: active
@@ -344,6 +349,21 @@ export async function apiAdminUpdateUser(id, body) {
   }
   if (body.subscriptionTier && body.subscriptionTier !== "User") {
     payload.plan = String(body.subscriptionTier).toLowerCase();
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "isBanned")) {
+    payload.isBanned = !!body.isBanned;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "banReason")) {
+    payload.banReason = body.banReason ? String(body.banReason).trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "banPermanent")) {
+    payload.banPermanent = !!body.banPermanent;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "bannedUntil")) {
+    payload.bannedUntil = body.bannedUntil || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "banDays") && body.banDays != null) {
+    payload.banDays = Number(body.banDays);
   }
   const res = await punch("/admin/users/" + id, { method: "PATCH", body: payload });
   return mapPunchUser(res.user || res);

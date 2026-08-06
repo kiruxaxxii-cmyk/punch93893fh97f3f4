@@ -394,11 +394,19 @@ export default function ProfilePage() {
   }
 
   const subscriptionLabel = formatSubscription(user.subscriptionTill, copy);
-  const subscriptionActive = !!user.canDownloadLauncher || hasActiveSubscription(user.subscriptionTill);
+  const subscriptionActive = !user.isBanned && (!!user.canDownloadLauncher || hasActiveSubscription(user.subscriptionTill));
   const canSeeSupport = !!user.isSystemOwner || !!hasRole(user.role, "Helper");
   const avatarSrc = (user.avatarUrl ?? "").trim();
   const initial = user.displayName.charAt(0).toUpperCase() || "N";
   const hasOtherSessions = sessions.some((session) => !session.current);
+
+  const banValue = user.isBanned
+    ? user.banPermanent
+      ? `${copy.states.bannedLabel} · ${copy.states.bannedForever}`
+      : user.bannedUntil
+        ? `${copy.states.bannedLabel} · ${copy.states.bannedUntil} ${new Date(user.bannedUntil).toLocaleString(locale === "ru" ? "ru-RU" : "en-US")}`
+        : copy.states.bannedLabel
+    : copy.states.dash;
 
   const rows = [
     { label: copy.rows.email, value: user.email ?? copy.states.dash, Icon: MailIcon, copyable: !!user.email },
@@ -409,8 +417,8 @@ export default function ProfilePage() {
     { label: copy.rows.promoCode, value: user.promoCode ?? copy.states.dash, Icon: PromoIcon },
     { label: copy.rows.subscriptionTill, value: subscriptionLabel, Icon: CalendarIcon },
     { label: copy.rows.twoFactor, value: user.twoFactorEnabled ? copy.states.enabled : copy.states.disabled, Icon: TwoFactorIcon },
-    { label: copy.rows.ban, value: user.isBanned ? copy.states.active : copy.states.dash, Icon: BanIcon },
-    { label: copy.rows.registerDate, value: user.createdAt, Icon: CalendarIcon }
+    { label: copy.rows.ban, value: banValue, Icon: BanIcon },
+    { label: copy.rows.registerDate, value: user.createdAt ? new Date(user.createdAt).toLocaleString(locale === "ru" ? "ru-RU" : "en-US") : copy.states.dash, Icon: CalendarIcon }
   ];
 
   const handleDownloadLoader = async () => {
@@ -468,6 +476,16 @@ export default function ProfilePage() {
             <div className="profile-page__hero-meta">
               <p className="profile-page__name">
                 {user.displayName} <span>[#{user.uid}]</span>
+                {user.isBanned ? (
+                  <span className="profile-page__ban-badge" title={user.banReason || undefined}>
+                    {copy.states?.bannedLabel || "Забанен"}
+                    {user.banPermanent
+                      ? ` · ${copy.states?.bannedForever || "навсегда"}`
+                      : user.bannedUntil
+                        ? ` · ${copy.states?.bannedUntil || "до"} ${new Date(user.bannedUntil).toLocaleString(locale === "ru" ? "ru-RU" : "en-US")}`
+                        : ""}
+                  </span>
+                ) : null}
               </p>
               <button type="button" className="profile-page__signout" onClick={handleSignOut}>
                 {copy.signOut}

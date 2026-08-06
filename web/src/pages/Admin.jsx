@@ -262,6 +262,10 @@ export default function Admin() {
     const promoCode = Object.prototype.hasOwnProperty.call(patch, "promoCode") ? ("" + (patch.promoCode ?? "")).trim() || null : ("" + (existing.promoCode ?? "")).trim() || null;
     const subscriptionTill = Object.prototype.hasOwnProperty.call(patch, "subscriptionTill") ? ("" + (patch.subscriptionTill ?? "")).trim() || null : ("" + (existing.subscriptionTill ?? "")).trim() || null;
     const banReason = Object.prototype.hasOwnProperty.call(patch, "banReason") ? ("" + (patch.banReason ?? "")).trim() || null : ("" + (existing.banReason ?? "")).trim() || null;
+    const bannedUntil = Object.prototype.hasOwnProperty.call(patch, "bannedUntil")
+      ? ("" + (patch.bannedUntil ?? "")).trim() || null
+      : ("" + (existing.bannedUntil ?? "")).trim() || null;
+    const banPermanent = !!(patch.banPermanent ?? existing.banPermanent);
     setBusy(true);
     try {
       await apiAdminUpdateUser(id, {
@@ -274,7 +278,9 @@ export default function Admin() {
         subscriptionTill,
         twoFactorEnabled: !!(patch.twoFactorEnabled ?? existing.twoFactorEnabled),
         isBanned: !!(patch.isBanned ?? existing.isBanned),
-        banReason
+        banReason,
+        bannedUntil,
+        banPermanent: !!(patch.isBanned ?? existing.isBanned) && banPermanent
       });
       await reloadDashboard(true);
       setStatusText(statusMsg);
@@ -575,14 +581,86 @@ export default function Admin() {
                         </label>
                         <label className="admin-page__field"><span>{copy.fields.hardwareId}</span><input className="glass-input" value={userForm.hardwareId ?? ""} onFocus={noopFocus} onChange={e => setUserField("hardwareId", e.target.value)} /></label>
                         <label className="admin-page__field admin-page__field--wide"><span>{copy.fields.banReason}</span><input className="glass-input" value={userForm.banReason ?? ""} onFocus={noopFocus} onChange={e => setUserField("banReason", e.target.value)} placeholder={copy.fields.banReason} /></label>
+                        <label className="admin-page__field admin-page__field--wide admin-page__field--stacked">
+                          <span>{copy.fields.bannedUntil || (locale === "ru" ? "Бан до" : "Banned until")}</span>
+                          <div className="admin-page__preset-row">
+                            <input
+                              className="admin-page__datetime"
+                              type="datetime-local"
+                              disabled={!!(userDraft?.banPermanent ?? editingUser.banPermanent) || !(userDraft?.isBanned ?? editingUser.isBanned)}
+                              value={(() => {
+                                const raw = userDraft?.bannedUntil ?? editingUser.bannedUntil;
+                                if (!raw) return "";
+                                const d = new Date(raw);
+                                if (Number.isNaN(d.getTime()) || d.getUTCFullYear() >= 9000) return "";
+                                const pad = (n) => String(n).padStart(2, "0");
+                                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                              })()}
+                              onChange={(e) => {
+                                setUserField("banPermanent", false);
+                                setUserField("bannedUntil", e.target.value ? new Date(e.target.value).toISOString() : null);
+                              }}
+                            />
+                            <ActionButton
+                              type="button"
+                              variant="secondary"
+                              className="admin-page__preset-button"
+                              disabled={!(userDraft?.isBanned ?? editingUser.isBanned)}
+                              onClick={() => {
+                                setUserField("isBanned", true);
+                                setUserField("banPermanent", true);
+                                setUserField("bannedUntil", null);
+                              }}
+                            >
+                              {locale === "ru" ? "Навсегда" : "Permanent"}
+                            </ActionButton>
+                            <ActionButton
+                              type="button"
+                              variant="secondary"
+                              className="admin-page__preset-button"
+                              disabled={!(userDraft?.isBanned ?? editingUser.isBanned)}
+                              onClick={() => {
+                                setUserField("isBanned", true);
+                                setUserField("banPermanent", false);
+                                setUserField("bannedUntil", new Date(Date.now() + 7 * 86400000).toISOString());
+                              }}
+                            >
+                              7d
+                            </ActionButton>
+                            <ActionButton
+                              type="button"
+                              variant="secondary"
+                              className="admin-page__preset-button"
+                              disabled={!(userDraft?.isBanned ?? editingUser.isBanned)}
+                              onClick={() => {
+                                setUserField("isBanned", true);
+                                setUserField("banPermanent", false);
+                                setUserField("bannedUntil", new Date(Date.now() + 30 * 86400000).toISOString());
+                              }}
+                            >
+                              30d
+                            </ActionButton>
+                          </div>
+                        </label>
                       </div>
                       <div className="admin-page__toggles">
                         <label className="admin-page__toggle"><input type="checkbox" checked={!!(userDraft?.twoFactorEnabled ?? editingUser.twoFactorEnabled)} onFocus={noopFocus} onChange={() => setUserField("twoFactorEnabled", !(userDraft?.twoFactorEnabled ?? editingUser.twoFactorEnabled))} /><span>{copy.fields.twoFactorEnabled}</span></label>
                         <label className="admin-page__toggle"><input type="checkbox" disabled={isSystemOwner(editingUser)} checked={!!(userDraft?.isBanned ?? editingUser.isBanned)} onFocus={noopFocus} onChange={() => {
                           const next = !(userDraft?.isBanned ?? editingUser.isBanned);
                           setUserField("isBanned", next);
-                          if (!next) setUserField("banReason", null);
+                          if (!next) {
+                            setUserField("banReason", null);
+                            setUserField("bannedUntil", null);
+                            setUserField("banPermanent", false);
+                          } else if (!(userDraft?.bannedUntil || editingUser.bannedUntil || userDraft?.banPermanent || editingUser.banPermanent)) {
+                            setUserField("banPermanent", true);
+                          }
                         }} /><span>{copy.fields.accountBanned}</span></label>
+                        <label className="admin-page__toggle"><input type="checkbox" disabled={isSystemOwner(editingUser) || !(userDraft?.isBanned ?? editingUser.isBanned)} checked={!!(userDraft?.banPermanent ?? editingUser.banPermanent)} onFocus={noopFocus} onChange={() => {
+                          const next = !(userDraft?.banPermanent ?? editingUser.banPermanent);
+                          setUserField("banPermanent", next);
+                          if (next) setUserField("bannedUntil", null);
+                        }} /><span>{locale === "ru" ? "Бан навсегда" : "Permanent ban"}</span></label>
                       </div>
                       <div className="admin-page__modal-actions">
                         <ActionButton type="button" variant="secondary" onClick={closeModal}>{copy.buttons.cancel}</ActionButton>
@@ -601,7 +679,11 @@ export default function Admin() {
                             hardwareId: ("" + (userDraft.hardwareId ?? editingUser.hardwareId ?? "")).trim() || null,
                             twoFactorEnabled: !!(userDraft.twoFactorEnabled ?? editingUser.twoFactorEnabled),
                             isBanned: !!(userDraft.isBanned ?? editingUser.isBanned),
-                            banReason: (userDraft.isBanned ?? editingUser.isBanned) && ("" + (userDraft.banReason ?? editingUser.banReason ?? "")).trim() || null
+                            banReason: (userDraft.isBanned ?? editingUser.isBanned) && ("" + (userDraft.banReason ?? editingUser.banReason ?? "")).trim() || null,
+                            banPermanent: !!(userDraft.isBanned ?? editingUser.isBanned) && !!(userDraft.banPermanent ?? editingUser.banPermanent),
+                            bannedUntil: (userDraft.isBanned ?? editingUser.isBanned) && !(userDraft.banPermanent ?? editingUser.banPermanent)
+                              ? (userDraft.bannedUntil ?? editingUser.bannedUntil ?? null)
+                              : null
                           };
                           const merged = { ...editingUser, ...patch };
                           updateUser(editingUser.id, patch, userSummaryLine(merged, locale));

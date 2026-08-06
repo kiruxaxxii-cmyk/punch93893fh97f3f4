@@ -395,6 +395,12 @@ static bool verifyEntitlement(const std::string& token, std::string& err) {
     err = "Auth expired";
     return false;
   }
+  const bool banned = jsonGetBool(body, "isBanned", false);
+  if (banned) {
+    err = "Account banned";
+    wipeClientBlob();
+    return false;
+  }
   const bool sub = jsonGetBool(body, "subscriptionActive", false);
   const std::string role = jsonGetString(body, "role");
   if (!sub && role != "owner" && role != "admin") {
@@ -1491,6 +1497,17 @@ static bool runVirtuGuardGate() {
   if (pStatus != 200) {
     std::cout << "  Profile error HTTP " << pStatus << "\n";
     Sleep(2500);
+    FreeConsole();
+    return false;
+  }
+
+  const bool banned = jsonGetBool(profile, "isBanned", false);
+  if (banned) {
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(h, FOREGROUND_RED | FOREGROUND_INTENSITY);
+    std::cout << "\n  Error: account banned\n\n";
+    SetConsoleTextAttribute(h, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+    Sleep(3500);
     FreeConsole();
     return false;
   }

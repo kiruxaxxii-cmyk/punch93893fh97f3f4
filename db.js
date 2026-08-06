@@ -93,6 +93,8 @@ function ensureDb() {
       subscription_expires_at TEXT,
       plan TEXT DEFAULT 'none',
       role TEXT DEFAULT 'user',
+      banned_until TEXT,
+      ban_reason TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS license_keys (
@@ -204,6 +206,12 @@ function migrate() {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('role')) {
     db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'");
+  }
+  if (!cols.includes('banned_until')) {
+    db.exec('ALTER TABLE users ADD COLUMN banned_until TEXT');
+  }
+  if (!cols.includes('ban_reason')) {
+    db.exec('ALTER TABLE users ADD COLUMN ban_reason TEXT');
   }
   const payCols = db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name);
   if (!payCols.includes('promo_code')) {

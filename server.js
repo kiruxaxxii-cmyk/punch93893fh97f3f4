@@ -244,6 +244,52 @@ function isSubscriptionActive(user) {
   return expires > new Date();
 }
 
+/** Permanent bans use a far-future sentinel so one column covers temp + forever. */
+const BAN_PERMANENT_UNTIL = '9999-12-31T23:59:59.000Z';
+
+function getBanUntilDate(user) {
+  if (!user) return null;
+  return parseDbDate(user.banned_until);
+}
+
+function isUserBanned(user) {
+  const until = getBanUntilDate(user);
+  if (!until) return false;
+  return until > new Date();
+}
+
+function isPermanentBan(user) {
+  const until = getBanUntilDate(user);
+  if (!until) return false;
+  return until.getUTCFullYear() >= 9000;
+}
+
+function banPayload(user) {
+  const banned = isUserBanned(user);
+  return {
+    isBanned: banned,
+    banReason: banned ? user.ban_reason || null : null,
+    bannedUntil: banned ? user.banned_until : null,
+    banPermanent: banned && isPermanentBan(user),
+  };
+}
+
+function rejectIfBanned(user, res) {
+  if (!isUserBanned(user)) return false;
+  const until = getBanUntilDate(user);
+  const permanent = isPermanentBan(user);
+  res.status(403).json({
+    error: permanent
+      ? 'Аккаунт заблокирован навсегда'
+      : `Аккаунт заблокирован до ${until.toISOString().slice(0, 10)}`,
+    code: 'account_banned',
+    bannedUntil: user.banned_until,
+    banReason: user.ban_reason || null,
+    banPermanent: permanent,
+  });
+  return true;
+}
+
 function addDays(date, days) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
@@ -269,6 +315,8 @@ function formatRole(role) {
 }
 
 function profilePayload(user) {
+  const ban = banPayload(user);
+  const subActive = isSubscriptionActive(user) && !ban.isBanned;
   return {
     id: user.id,
     username: user.username,
@@ -277,13 +325,14 @@ function profilePayload(user) {
     plan: user.plan,
     role: user.role,
     roleLabel: formatRole(user.role),
-    subscriptionActive: isSubscriptionActive(user),
+    subscriptionActive: subActive,
     subscriptionExpiresAt: user.subscription_expires_at,
     createdAt: user.created_at,
     hwidResetAvailable:
       !user.hwid_reset_at ||
       new Date(user.hwid_reset_at) < new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-    canDownloadLauncher: isSubscriptionActive(user),
+    canDownloadLauncher: subActive,
+    ...ban,
   };
 }
 
@@ -331,6 +380,10 @@ function fulfillPayment(payment) {
 
   const user = getUserRecord(payment.user_id);
   if (!user) return;
+  if (isUserBanned(user)) {
+    logAction(user.id, user.hwid, null, `payment_blocked_banned:${payment.id}`);
+    return;
+  }
 
   if (payment.plan_key === 'hwid_reset') {
     db.prepare("UPDATE users SET hwid = NULL, hwid_reset_at = datetime('now') WHERE id = ?").run(user.id);
@@ -604,6 +657,7 @@ app.get('/api/loader/control', authMiddleware, (req, res) => {
 app.get('/api/loader/binary', authMiddleware, (req, res) => {
   const user = getUserRecord(req.user.id);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (rejectIfBanned(user, res)) return;
   if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
@@ -762,6 +816,7 @@ app.post('/api/payments/create', authMiddleware, apiLimiter, async (req, res) =>
 
   const user = getUserRecord(req.user.id);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (rejectIfBanned(user, res)) return;
 
   const payMethod = String(req.body.method || 'cryptobot').toLowerCase();
   const origin = siteOrigin(req);
@@ -901,6 +956,7 @@ app.post('/api/launcher/chat', authMiddleware, apiLimiter, (req, res) => {
   if (text.length > 500) return res.status(400).json({ error: 'Слишком длинное сообщение' });
 
   const user = getUserRecord(req.user.id);
+  if (rejectIfBanned(user, res)) return;
   const result = db
     .prepare('INSERT INTO launcher_chat (user_id, username, message) VALUES (?, ?, ?)')
     .run(user.id, user.username, text);
@@ -920,6 +976,7 @@ app.post('/api/launcher/chat', authMiddleware, apiLimiter, (req, res) => {
 function sendLauncherDownload(req, res) {
   const user = getUserRecord(req.user.id);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (rejectIfBanned(user, res)) return;
   if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
@@ -937,6 +994,7 @@ app.get('/api/profile/loader/download', authMiddleware, sendLauncherDownload);
 
 app.get('/api/download/client', authMiddleware, async (req, res) => {
   const user = getUserRecord(req.user.id);
+  if (rejectIfBanned(user, res)) return;
   if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
@@ -974,6 +1032,7 @@ app.get('/api/download/client', authMiddleware, async (req, res) => {
 
 app.get('/api/download/fabric-api', authMiddleware, async (req, res) => {
   const user = getUserRecord(req.user.id);
+  if (rejectIfBanned(user, res)) return;
   if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
@@ -1010,6 +1069,7 @@ app.get('/api/download/fabric-api', authMiddleware, async (req, res) => {
 
 app.get('/api/download/ias', authMiddleware, async (req, res) => {
   const user = getUserRecord(req.user.id);
+  if (rejectIfBanned(user, res)) return;
   if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
@@ -1059,6 +1119,8 @@ app.post('/api/activate-key', authMiddleware, (req, res) => {
   if (license.used_by) return res.status(409).json({ error: 'Ключ уже использован' });
 
   const user = getUserRecord(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (rejectIfBanned(user, res)) return;
   const now = new Date();
   let base = now;
   if (isSubscriptionActive(user)) {
@@ -1089,6 +1151,7 @@ app.post('/api/bind-hwid', authMiddleware, (req, res) => {
   if (!hwid?.trim()) return res.status(400).json({ error: 'HWID не указан' });
 
   const user = getUserRecord(req.user.id);
+  if (rejectIfBanned(user, res)) return;
   if (!isSubscriptionActive(user)) {
     return res.status(403).json({ error: 'Нет активной подписки' });
   }
@@ -1128,6 +1191,7 @@ app.post('/api/verify', apiLimiter, (req, res) => {
     .prepare('SELECT * FROM users WHERE LOWER(TRIM(username)) = ?')
     .get(String(username).trim().toLowerCase());
   if (!user) return res.json({ valid: false, error: 'user_not_found' });
+  if (isUserBanned(user)) return res.json({ valid: false, error: 'account_banned' });
   if (!isSubscriptionActive(user)) return res.json({ valid: false, error: 'no_subscription' });
   if (!user.hwid) return res.json({ valid: false, error: 'hwid_not_bound' });
   if (user.hwid !== hwid.trim()) return res.json({ valid: false, error: 'hwid_mismatch' });
@@ -1145,26 +1209,32 @@ app.post('/api/verify', apiLimiter, (req, res) => {
 app.get('/api/admin/dashboard', authMiddleware, roleMiddleware('admin', 'moderator', 'owner'), (req, res) => {
   const users = db
     .prepare(
-      `SELECT id, username, email, plan, role, hwid, subscription_expires_at, created_at
+      `SELECT id, username, email, plan, role, hwid, subscription_expires_at, created_at,
+              banned_until, ban_reason
        FROM users ORDER BY id DESC LIMIT 500`
     )
     .all()
-    .map((u) => ({
-      uid: u.id,
-      id: String(u.id),
-      displayName: u.username,
-      email: u.email,
-      role: u.role === 'owner' ? 'Owner' : u.role === 'admin' ? 'Admin' : u.role === 'moderator' ? 'Helper' : u.role === 'media' ? 'Youtube' : 'User',
-      subscriptionTier: u.plan && u.plan !== 'none' ? u.plan : 'User',
-      createdAt: u.created_at,
-      hardwareId: u.hwid,
-      subscriptionTill: u.subscription_expires_at,
-      twoFactorEnabled: false,
-      isBanned: false,
-      banReason: null,
-      isSystemOwner: u.role === 'owner',
-      lastSeen: null,
-    }));
+    .map((u) => {
+      const ban = banPayload(u);
+      return {
+        uid: u.id,
+        id: String(u.id),
+        displayName: u.username,
+        email: u.email,
+        role: u.role === 'owner' ? 'Owner' : u.role === 'admin' ? 'Admin' : u.role === 'moderator' ? 'Helper' : u.role === 'media' ? 'Youtube' : 'User',
+        subscriptionTier: u.plan && u.plan !== 'none' ? u.plan : 'User',
+        createdAt: u.created_at,
+        hardwareId: u.hwid,
+        subscriptionTill: u.subscription_expires_at,
+        twoFactorEnabled: false,
+        isBanned: ban.isBanned,
+        banReason: ban.banReason,
+        bannedUntil: ban.bannedUntil,
+        banPermanent: ban.banPermanent,
+        isSystemOwner: u.role === 'owner',
+        lastSeen: null,
+      };
+    });
 
   const licenseKeys = db
     .prepare(
@@ -1283,9 +1353,12 @@ app.get('/api/admin/users', authMiddleware, roleMiddleware('admin', 'moderator',
 
 app.patch('/api/admin/users/:id', authMiddleware, roleMiddleware('admin', 'owner'), (req, res) => {
   const id = Number(req.params.id);
-  const { role, plan, subscriptionExpiresAt } = req.body;
+  const { role, plan, subscriptionExpiresAt, isBanned, banReason, bannedUntil, banPermanent, banDays } = req.body;
   const user = getUserRecord(id);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (user.role === 'owner' && (isBanned === true || banPermanent === true || bannedUntil || banDays)) {
+    return res.status(403).json({ error: 'Нельзя банить owner' });
+  }
 
   if (role && VALID_ROLES.includes(role)) {
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
@@ -1301,6 +1374,31 @@ app.patch('/api/admin/users/:id', authMiddleware, roleMiddleware('admin', 'owner
       db.prepare('UPDATE users SET subscription_expires_at = ? WHERE id = ?').run(iso, id);
     }
   }
+
+  if (isBanned === false) {
+    db.prepare('UPDATE users SET banned_until = NULL, ban_reason = NULL WHERE id = ?').run(id);
+  } else if (isBanned === true || banPermanent === true || bannedUntil || banDays) {
+    let untilIso = BAN_PERMANENT_UNTIL;
+    if (banPermanent === true) {
+      untilIso = BAN_PERMANENT_UNTIL;
+    } else if (bannedUntil) {
+      const d = parseDbDate(bannedUntil) || new Date(bannedUntil);
+      if (!d || Number.isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'Некорректная дата бана' });
+      }
+      untilIso = d.toISOString();
+    } else if (banDays != null && Number(banDays) > 0) {
+      untilIso = addDays(new Date(), Number(banDays));
+    }
+    const reason = banReason != null ? String(banReason).trim() || null : user.ban_reason || null;
+    db.prepare('UPDATE users SET banned_until = ?, ban_reason = ? WHERE id = ?').run(untilIso, reason, id);
+  } else if (banReason !== undefined && isUserBanned(user)) {
+    db.prepare('UPDATE users SET ban_reason = ? WHERE id = ?').run(
+      String(banReason || '').trim() || null,
+      id
+    );
+  }
+
   logAction(req.user.id, null, req.ip, `admin_update_user:${id}`);
   res.json({ success: true, user: profilePayload(getUserRecord(id)) });
 });
