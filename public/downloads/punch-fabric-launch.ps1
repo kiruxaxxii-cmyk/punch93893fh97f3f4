@@ -70,8 +70,8 @@ function Ensure-PunchMods {
     New-Item -ItemType Directory -Force -Path $ModsDir | Out-Null
     $jars = @(Get-ChildItem $ModsDir -Force -Filter "*.jar" -ErrorAction SilentlyContinue |
       Where-Object { $_.Length -gt 100000 })
-    if ($jars.Count -lt 3) {
-      throw "Hidden mods vault incomplete ($($jars.Count) jars, need 3). Re-run Punch Loader."
+    if ($jars.Count -lt 2) {
+      throw "Hidden mods vault incomplete ($($jars.Count) jars, need Punch+Fabric). Re-run Punch Loader."
     }
     foreach ($j in $jars) {
       Clear-JarHidden $j.FullName

@@ -943,8 +943,12 @@ app.get('/api/download/client', authMiddleware, async (req, res) => {
 
   logAction(user.id, user.hwid, req.ip, 'client_download');
 
+  // Prefer local file (shipped in repo) — avoid buffering Dropbox through Railway RAM
   if (fs.existsSync(CLIENT_JAR_PATH)) {
-    return res.download(CLIENT_JAR_PATH, 'punch-client.jar');
+    res.setHeader('Content-Type', 'application/java-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="punch-client.jar"');
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.sendFile(path.resolve(CLIENT_JAR_PATH));
   }
 
   if (CLIENT_JAR_URL) {
@@ -970,14 +974,17 @@ app.get('/api/download/client', authMiddleware, async (req, res) => {
 
 app.get('/api/download/fabric-api', authMiddleware, async (req, res) => {
   const user = getUserRecord(req.user.id);
-  if (!isSubscriptionActive(user)) {
+  if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
 
   logAction(user.id, user.hwid, req.ip, 'fabric_api_download');
 
   if (fs.existsSync(FABRIC_API_PATH)) {
-    return res.download(FABRIC_API_PATH, 'fabric-api-0.119.4-1.21.4.jar');
+    res.setHeader('Content-Type', 'application/java-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="fabric-api-0.119.4-1.21.4.jar"');
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.sendFile(path.resolve(FABRIC_API_PATH));
   }
 
   if (FABRIC_API_URL) {
@@ -1003,14 +1010,17 @@ app.get('/api/download/fabric-api', authMiddleware, async (req, res) => {
 
 app.get('/api/download/ias', authMiddleware, async (req, res) => {
   const user = getUserRecord(req.user.id);
-  if (!isSubscriptionActive(user)) {
+  if (!isSubscriptionActive(user) && user.role !== 'owner' && user.role !== 'admin') {
     return res.status(403).json({ error: 'Нужна активная подписка на клиент' });
   }
 
   logAction(user.id, user.hwid, req.ip, 'ias_download');
 
   if (fs.existsSync(IAS_JAR_PATH)) {
-    return res.download(IAS_JAR_PATH, 'IAS-9.0.7-1.21.4-fabric.jar');
+    res.setHeader('Content-Type', 'application/java-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="IAS-9.0.7-1.21.4-fabric.jar"');
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.sendFile(path.resolve(IAS_JAR_PATH));
   }
 
   if (IAS_JAR_URL) {

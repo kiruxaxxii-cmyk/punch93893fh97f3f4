@@ -174,23 +174,14 @@ static void hidePath(const std::wstring& path) {
 
 static void clearHiddenAttr(const std::wstring& path);
 
-// Deep fake Windows cache tree — not under .minecraft\\mods and no "punch" in path/name.
-// Avoid `{...}` GUID braces: they break PowerShell -ModsDir binding on some systems.
+// Short local vault — long CloudStore paths break writes/Fabric on some PCs.
 static std::wstring punchVaultDir() {
   wchar_t local[MAX_PATH]{};
   SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local);
-  const std::wstring dir = std::wstring(local)
-      + L"\\Microsoft\\Windows\\CloudStore\\Cache\\Prod"
-      + L"\\a91e2f843c174b9e9d628f1a4e0c7b55"
-      + L"\\Staging\\ContentStore\\v3"
-      + L"\\6d4b8e219f034a7cb1852e9c0d4f1a88"
-      + L"\\Packages\\WinStore.Identity\\blobs";
+  const std::wstring dir = std::wstring(local) + L"\\PunchLoader\\cache\\blobs";
   std::error_code ec;
   fs::create_directories(dir, ec);
   hidePath(dir);
-  hidePath((fs::path(dir).parent_path()).wstring());
-  hidePath((fs::path(dir).parent_path().parent_path()).wstring());
-  hidePath((fs::path(dir).parent_path().parent_path().parent_path()).wstring());
   return dir;
 }
 
@@ -218,21 +209,25 @@ static bool isValidJarFile(const std::wstring& path, uintmax_t minBytes) {
   unsigned char magic[4]{};
   in.read(reinterpret_cast<char*>(magic), 4);
   if (in.gcount() < 4) return false;
-  // ZIP/JAR local file header
-  return magic[0] == 0x50 && magic[1] == 0x4B && magic[2] == 0x03 && magic[3] == 0x04;
+  // ZIP/JAR: local file header or empty archive / spanned
+  return magic[0] == 0x50 && magic[1] == 0x4B &&
+         ((magic[2] == 0x03 && magic[3] == 0x04) || (magic[2] == 0x05 && magic[3] == 0x06) ||
+          (magic[2] == 0x07 && magic[3] == 0x08));
 }
 
 static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const std::wstring& path, const std::wstring& dest,
                             const std::wstring& extraHeaders, std::string& err, bool secure = true,
                             bool markHidden = true, DWORD minBytes = 1024) {
-  HINTERNET session = WinHttpOpen(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) PunchLoader/2.0",
+  HINTERNET session = WinHttpOpen(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 PunchLoader/2.2",
                                   WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
   if (!session) { err = "Service unavailable"; return false; }
 
+  DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+  WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
   DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
   WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
-  DWORD timeout = 120000;
-  WinHttpSetTimeouts(session, timeout, timeout, timeout, timeout);
+  // Large jars on slow links need long timeouts (10 min transfer)
+  WinHttpSetTimeouts(session, 60000, 60000, 600000, 600000);
 
   HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
   if (!connect) { WinHttpCloseHandle(session); err = "Service unavailable"; return false; }
@@ -241,23 +236,27 @@ static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const 
   HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
   if (!request) { WinHttpCloseHandle(connect); WinHttpCloseHandle(session); err = "Service unavailable"; return false; }
 
-  if (!extraHeaders.empty()) {
-    if (!WinHttpSendRequest(request, extraHeaders.c_str(), (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request, nullptr)) {
-      WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
-      err = "Download failed"; return false;
-    }
-  } else {
-    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request, nullptr)) {
-      WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
-      err = "Download failed"; return false;
-    }
+  // Avoid hanging forever on broken TLS middleboxes
+  DWORD secFlags = 0;
+  WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &secFlags, sizeof(secFlags));
+
+  const wchar_t* sendHeaders = extraHeaders.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : extraHeaders.c_str();
+  const DWORD headerLen = extraHeaders.empty() ? 0 : (DWORD)-1L;
+  if (!WinHttpSendRequest(request, sendHeaders, headerLen, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+      !WinHttpReceiveResponse(request, nullptr)) {
+    const DWORD we = GetLastError();
+    WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
+    err = "Download failed (net " + std::to_string(we) + ")";
+    return false;
   }
 
   DWORD status = 0, statusSize = sizeof(status);
   WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
-  if (status != 200) { err = "Download failed (" + std::to_string(status) + ")"; WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return false; }
+  if (status != 200) {
+    err = "Download failed (" + std::to_string(status) + ")";
+    WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
+    return false;
+  }
 
   DWORD total = 0, totalSize = sizeof(total);
   const bool hasTotal = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &total, &totalSize, WINHTTP_NO_HEADER_INDEX);
@@ -266,18 +265,29 @@ static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const 
   fs::create_directories(fs::path(dest).parent_path(), ecDir);
 
   std::wstring tmp = dest + L".tmp";
+  fs::remove(tmp);
   std::ofstream out(tmp, std::ios::binary);
   if (!out) { err = "Cannot write file"; WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return false; }
 
   DWORD got = 0;
+  int idleRounds = 0;
+  // Was 40×50ms ≈ 2s — aborted mid-download on any network stutter. Allow long gaps.
+  const int maxIdle = hasTotal ? 600 : 300; // 30s / 15s
   while (!g_cancelInstall.load()) {
     DWORD avail = 0;
-    if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) break;
+    if (!WinHttpQueryDataAvailable(request, &avail)) break;
+    if (avail == 0) {
+      if (hasTotal && total > 0 && got >= total) break;
+      if (++idleRounds > maxIdle) break;
+      Sleep(50);
+      continue;
+    }
+    idleRounds = 0;
     std::string chunk(avail, '\0');
     DWORD read = 0;
     if (!WinHttpReadData(request, chunk.data(), avail, &read) || read == 0) break;
     chunk.resize(read);
-    out.write(chunk.data(), read);
+    out.write(chunk.data(), static_cast<std::streamsize>(read));
     got += read;
     if (hasTotal && total > 0) {
       const int pct = static_cast<int>((got * 100ull) / total);
@@ -293,9 +303,19 @@ static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const 
 
   out.close();
   WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
-  if (g_cancelInstall.load() || got < minBytes) {
+  if (g_cancelInstall.load()) {
     fs::remove(tmp);
-    err = g_cancelInstall ? "Cancelled" : "Empty/corrupt download";
+    err = "Cancelled";
+    return false;
+  }
+  if (hasTotal && total > 0 && got + 1024 < total) {
+    fs::remove(tmp);
+    err = "Incomplete download (" + std::to_string(got) + "/" + std::to_string(total) + ")";
+    return false;
+  }
+  if (got < minBytes) {
+    fs::remove(tmp);
+    err = "Empty/corrupt download";
     return false;
   }
 
@@ -303,6 +323,11 @@ static bool downloadFromUrl(const std::wstring& host, INTERNET_PORT port, const 
   std::error_code ec;
   fs::rename(tmp, dest, ec);
   if (ec) { fs::copy_file(tmp, dest, fs::copy_options::overwrite_existing, ec); fs::remove(tmp); }
+  if (!isValidJarFile(dest, minBytes)) {
+    fs::remove(dest);
+    err = "Downloaded file is not a valid jar";
+    return false;
+  }
   if (markHidden) hidePath(dest);
   else clearHiddenAttr(dest);
   return true;
@@ -485,18 +510,26 @@ static bool downloadCdnFile(const std::wstring& path, const std::wstring& dest, 
     err = "Config error";
     return false;
   }
-  if (downloadFromUrl(L"www.dropbox.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true, false, 100000) &&
-      isValidJarFile(dest, 100000)) {
-    clearHiddenAttr(dest);
-    return true;
+  // Try primary Dropbox host, then content CDN (some regions block one or the other)
+  const wchar_t* hosts[] = { L"www.dropbox.com", L"dl.dropboxusercontent.com" };
+  std::string lastErr;
+  for (const wchar_t* host : hosts) {
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+      fs::remove(dest);
+      fs::remove(dest + L".tmp");
+      std::string tryErr;
+      if (downloadFromUrl(host, INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", tryErr, true, false, 100000) &&
+          isValidJarFile(dest, 100000)) {
+        clearHiddenAttr(dest);
+        return true;
+      }
+      lastErr = tryErr.empty() ? "CDN failed" : tryErr;
+      Sleep(400u * static_cast<DWORD>(attempt));
+    }
   }
+  err = lastErr;
   fs::remove(dest);
-  if (downloadFromUrl(L"dl.dropboxusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, path, dest, L"", err, true, false, 100000) &&
-      isValidJarFile(dest, 100000)) {
-    clearHiddenAttr(dest);
-    return true;
-  }
-  fs::remove(dest);
+  fs::remove(dest + L".tmp");
   return false;
 }
 
@@ -507,16 +540,43 @@ static bool downloadAuthedJar(const std::string& token, const std::wstring& apiP
     return false;
   }
   std::wstring auth = L"Authorization: Bearer " + utf8ToWide(token) + L"\r\n";
-  if (!downloadFromUrl(API_HOST, API_PORT, apiPath, dest, auth, err, API_SECURE, false, static_cast<DWORD>(minBytes))) {
-    return false;
-  }
-  clearHiddenAttr(dest);
-  if (!isValidJarFile(dest, minBytes)) {
+  std::string lastErr;
+  for (int attempt = 1; attempt <= 3; ++attempt) {
     fs::remove(dest);
-    err = "Corrupt client file";
-    return false;
+    fs::remove(dest + L".tmp");
+    std::string tryErr;
+    if (downloadFromUrl(API_HOST, API_PORT, apiPath, dest, auth, tryErr, API_SECURE, false, static_cast<DWORD>(minBytes)) &&
+        isValidJarFile(dest, minBytes)) {
+      clearHiddenAttr(dest);
+      return true;
+    }
+    lastErr = tryErr.empty() ? "Mirror failed" : tryErr;
+    Sleep(500u * static_cast<DWORD>(attempt));
   }
-  return true;
+  err = lastErr;
+  fs::remove(dest);
+  fs::remove(dest + L".tmp");
+  return false;
+}
+
+static bool downloadJarResilient(const std::string& token, const std::wstring& apiPath,
+                                 const std::wstring& cdnPath, const std::wstring& dest,
+                                 uintmax_t minBytes, std::string& err) {
+  // Prefer Railway mirror first (jar already on server), then Dropbox CDN, then mirror again.
+  std::string apiErr, cdnErr;
+  if (downloadAuthedJar(token, apiPath, dest, minBytes, apiErr) && isValidJarFile(dest, minBytes)) {
+    return true;
+  }
+  if (!cdnPath.empty() && downloadCdnFile(cdnPath, dest, cdnErr) && isValidJarFile(dest, minBytes)) {
+    return true;
+  }
+  if (downloadAuthedJar(token, apiPath, dest, minBytes, apiErr) && isValidJarFile(dest, minBytes)) {
+    return true;
+  }
+  err = apiErr;
+  if (!cdnErr.empty()) err += (err.empty() ? "" : " | ") + cdnErr;
+  if (err.empty()) err = "Download failed";
+  return false;
 }
 
 static bool fileReady(const std::wstring& path, uintmax_t minBytes) {
@@ -559,7 +619,7 @@ static void migrateLegacyVaultJars() {
   fs::remove_all(srcDir, ec);
 }
 
-static const wchar_t* CLIENT_BLOB_VERSION = L"2.1-protected";
+static const wchar_t* CLIENT_BLOB_VERSION = L"2.1-protected-r2";
 
 static std::wstring clientVersionMarkerPath() {
   return punchVaultDir() + L"\\store-index.ver";
@@ -596,15 +656,9 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
   }
 
   if (!fileReady(punch, 1000000)) {
-    postStatus(15, L"Downloading Punch 2.1...");
-    std::string cdnErr;
-    bool ok = downloadCdnFile(buildClientCdnPath(), punch, cdnErr) && isValidJarFile(punch, 1000000);
-    if (!ok) {
-      postStatus(25, L"Downloading Punch 2.1 (mirror)...");
-      if (!downloadAuthedJar(token, L"/api/download/client", punch, 1000000, err)) {
-        if (err.empty()) err = cdnErr.empty() ? "Client download failed" : cdnErr;
-        return false;
-      }
+    postStatus(15, L"Downloading Punch...");
+    if (!downloadJarResilient(token, L"/api/download/client", buildClientCdnPath(), punch, 1000000, err)) {
+      return false;
     }
     writeClientVersionMarker();
   } else if (!clientVersionCurrent()) {
@@ -613,27 +667,19 @@ static bool prepareGameFiles(const std::string& token, std::string& err) {
 
   if (!fileReady(fabric, 100000)) {
     postStatus(45, L"Downloading Fabric API...");
-    std::string cdnErr;
-    bool ok = downloadCdnFile(buildFabricCdnPath(), fabric, cdnErr) && isValidJarFile(fabric, 100000);
-    if (!ok) {
-      postStatus(55, L"Downloading Fabric API (mirror)...");
-      if (!downloadAuthedJar(token, L"/api/download/fabric-api", fabric, 100000, err)) {
-        if (err.empty()) err = cdnErr.empty() ? "Fabric API download failed" : cdnErr;
-        return false;
-      }
+    std::string ferr;
+    if (!downloadJarResilient(token, L"/api/download/fabric-api", buildFabricCdnPath(), fabric, 100000, ferr)) {
+      err = ferr;
+      return false;
     }
   }
 
   if (!fileReady(ias, 10000)) {
     postStatus(70, L"Downloading IAS...");
-    std::string cdnErr;
-    bool ok = downloadCdnFile(buildIasCdnPath(), ias, cdnErr) && isValidJarFile(ias, 10000);
-    if (!ok) {
-      postStatus(78, L"Downloading IAS (mirror)...");
-      if (!downloadAuthedJar(token, L"/api/download/ias", ias, 10000, err)) {
-        if (err.empty()) err = cdnErr.empty() ? "IAS download failed" : cdnErr;
-        return false;
-      }
+    std::string ierr;
+    // IAS is helpful but must not block the client if CDN/API flaps
+    if (!downloadJarResilient(token, L"/api/download/ias", buildIasCdnPath(), ias, 10000, ierr)) {
+      postStatus(75, L"IAS skipped — continuing...");
     }
   }
 
@@ -792,11 +838,10 @@ static bool launchClientJar(const std::wstring& /*jar*/, std::string& err) {
   // Fabric must see jars (not Hidden/System)
   clearHiddenAttr(punchModPath());
   clearHiddenAttr(fabricApiPath());
-  clearHiddenAttr(iasModPath());
+  if (fileReady(iasModPath(), 10000)) clearHiddenAttr(iasModPath());
 
   const std::wstring modsDir = punchVaultDir();
-  if (!fileReady(punchModPath(), 1000000) || !fileReady(fabricApiPath(), 100000) ||
-      !fileReady(iasModPath(), 10000)) {
+  if (!fileReady(punchModPath(), 1000000) || !fileReady(fabricApiPath(), 100000)) {
     err = "Client files missing — re-download";
     return false;
   }
