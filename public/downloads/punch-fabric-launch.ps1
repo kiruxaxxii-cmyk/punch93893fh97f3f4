@@ -1,4 +1,4 @@
-﻿# Punch Fabric launcher - mods installed by punch-loader; this starts Minecraft 1.21.4 + Fabric.
+# Punch Fabric launcher - mods installed by punch-loader; this starts Minecraft 1.21.4 + Fabric.
 param(
   [int]$RamMb = 4096,
   [string]$Username = "Player",
@@ -77,7 +77,21 @@ function Ensure-PunchMods {
       Clear-JarHidden $j.FullName
       Write-Info "Vault mod ready: $($j.Name) ($($j.Length) bytes)"
     }
-    # Prefer largest jar as client; names are obfuscated
+    # Check explicitly for store-index-01.jar (Punch), store-index-02.jar (FabricApi), store-index-03.jar (IAS)
+    $punchCandidate = Join-Path $ModsDir "store-index-01.jar"
+    $fabricCandidate = Join-Path $ModsDir "store-index-02.jar"
+    $iasCandidate = Join-Path $ModsDir "store-index-03.jar"
+
+    if ((Test-Path $punchCandidate) -and (Test-Path $fabricCandidate)) {
+      return @{
+        Punch = $punchCandidate
+        FabricApi = $fabricCandidate
+        Ias = if (Test-Path $iasCandidate) { $iasCandidate } else { $null }
+        ModsFolder = (Resolve-Path $ModsDir).Path
+      }
+    }
+
+    # Fallback if obfuscated names vary: sort by length (largest first)
     $sorted = $jars | Sort-Object Length -Descending
     return @{
       Punch = $sorted[0].FullName
